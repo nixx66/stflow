@@ -1,0 +1,23 @@
+node_modules/
+.next/
+.pnpm-store/
+*.tsbuildinfo
+*.log
+.stflow-data/
+
+.env
+.env.local
+.env.*.local
+
+dist/
+coverage/
+
+.vercel
+.env*
+!.env.example
+
+# Local Codex and development artifacts
+.agents/
+.codex/
+.npm-cache/
+tmp/
