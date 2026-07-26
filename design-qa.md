@@ -33,7 +33,7 @@ final result: passed
 
 - Baselines: `tmp/refactor-baseline/{home-desktop,home-mobile,dashboard-desktop,invoice-new-desktop,pay-desktop,receipt-desktop}.png`
 - Post-refactor captures: `tmp/refactor-post/{home-desktop,home-mobile,dashboard-desktop,invoice-new-desktop,pay-desktop,receipt-desktop}.png`
-- Capture environment: fresh Edge headless profiles against the rebuilt production server, 5-second virtual-time budget; 1600 × 1200 for all desktop routes and 500 × 1200 for the mobile homepage.
+- Capture environment: fresh Edge headless profiles against the rebuilt production server, 5-second virtual-time budget; 1600 × 1200 for all desktop routes and 500 × 1200 for the mobile homepage. The mobile baseline was recaptured from the clean main checkout at `a04ab54` on port 3100 and the post-refactor image from clean `19dcc49` on port 3101 using the identical Edge version and flags: `--headless=new`, `--disable-gpu`, `--hide-scrollbars`, `--force-device-scale-factor=1`, `--window-size=500,1200`, `--virtual-time-budget=5000`, fresh profiles, and top-of-page capture.
 - Routes: `/`, `/dashboard`, `/invoice/new`, `/pay/af-1029`, and `/receipt/af-1001`.
 
 ## Findings
@@ -41,7 +41,7 @@ final result: passed
 - P0: none.
 - P1: none.
 - P2: none.
-- P3: fresh production captures of the animated homepage and invoice form differ at the pixel/hash level while preserving the same visible copy, DOM-driven layout, typography, colors, controls, and responsive behavior. The dashboard invoice-card order reflects pre-existing data ordering outside this task’s presentation-only diff; the card layout and controls are unchanged. The pay and receipt captures are byte-identical to the baseline.
+- P3: the dashboard invoice-card order reflects pre-existing data ordering outside this task’s presentation-only diff; the card layout and controls are unchanged. The pay and receipt captures are byte-identical to the baseline. The recaptured mobile homepage pair has identical no-scrollbar viewport conditions and the same two-line `without chaos.` headline wrap.
 
 final result: passed
 
