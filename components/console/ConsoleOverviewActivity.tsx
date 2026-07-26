@@ -16,7 +16,6 @@ type ConsoleOverviewActivityProps = {
 };
 
 export function ConsoleOverviewActivity({ latestEvents, receivables, summary }: ConsoleOverviewActivityProps) {
-  const totalExposure = summary.pendingReceivableAmount + summary.pendingPayableAmount;
   const cashflowRows = [
     {
       label: "Collected",
