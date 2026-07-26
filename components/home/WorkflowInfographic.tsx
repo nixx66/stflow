@@ -32,6 +32,21 @@ const proofSteps = [
   { label: "console", value: "indexed" }
 ] as const;
 
+const workflowMetrics = [
+  ["8", "operating states"],
+  ["1", "shared invoice link"],
+  ["0", "merchant self-pay"]
+] as const;
+
+const workflowRoles = [
+  ["Merchant", "creates and shares"],
+  ["Payer", "authorizes USDC"],
+  ["Console", "indexes proof"]
+] as const;
+
+const loopSteps = [...steps, ...steps];
+const loopProofSteps = [...proofSteps, ...proofSteps, ...proofSteps];
+
 function moveLight(event: MouseEvent<HTMLElement>) {
   const target = event.currentTarget;
   const rect = target.getBoundingClientRect();
@@ -57,9 +72,6 @@ function WorkflowCard({ step }: { step: (typeof steps)[number] }) {
 }
 
 export function WorkflowInfographic() {
-  const loopSteps = [...steps, ...steps];
-  const loopProofSteps = [...proofSteps, ...proofSteps, ...proofSteps];
-
   return (
     <section className="relative overflow-hidden bg-[#f7fbf4] px-4 py-14 sm:px-6 lg:px-8 2xl:px-10" id="workflow">
       <div className="mx-auto max-w-[1760px]">
@@ -77,11 +89,7 @@ export function WorkflowInfographic() {
               Every step moves as one settlement loop: create the request, route the payer, confirm USDC, and reconcile the receipt.
             </p>
             <div className="mt-10 grid max-w-xl gap-3 sm:grid-cols-3">
-              {[
-                ["8", "operating states"],
-                ["1", "shared invoice link"],
-                ["0", "merchant self-pay"]
-              ].map(([value, label]) => (
+              {workflowMetrics.map(([value, label]) => (
                     <div className="rounded-[1.5rem] border border-[#d8e8d3] bg-[#fbfff8]/80 p-4 shadow-[0_16px_45px_rgba(4,41,31,0.05)]" key={label}>
                   <p className="text-3xl font-black text-[#063f2c]">{value}</p>
                   <p className="mt-1 text-xs font-black uppercase tracking-[0.12em] text-[#738071]">{label}</p>
@@ -127,11 +135,7 @@ export function WorkflowInfographic() {
                   </p>
                 </div>
                     <div className="grid gap-3 rounded-[2rem] border border-[#d8e8d3] bg-[#f1f8ec] p-4">
-                  {[
-                    ["Merchant", "creates and shares"],
-                    ["Payer", "authorizes USDC"],
-                    ["Console", "indexes proof"]
-                  ].map(([label, value]) => (
+                  {workflowRoles.map(([label, value]) => (
                     <div className="flex items-center justify-between rounded-2xl bg-white/75 px-4 py-3" key={label}>
                       <span className="text-sm font-black text-[#657364]">{label}</span>
                       <span className="font-mono text-sm font-black text-[#063f2c]">{value}</span>

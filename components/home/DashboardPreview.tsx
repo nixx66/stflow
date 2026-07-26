@@ -18,6 +18,8 @@ const activity = [
 
 const rollingDigits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 const rollingLoopDigits = [...rollingDigits, ...rollingDigits];
+const operatingAreas = ["Receivables", "Payables", "Receipts", "Audit trail"] as const;
+const settlementWindowHeights = [42, 68, 54, 86, 61, 92, 74, 98] as const;
 
 function RollingValue({ value }: { value: string }) {
   const size = getMetricValueSize(value);
@@ -79,7 +81,7 @@ export function DashboardPreview() {
             <ArrowRight className="h-4 w-4" />
           </Link>
           <div className="mt-14 grid max-w-xl gap-3 sm:grid-cols-2">
-            {["Receivables", "Payables", "Receipts", "Audit trail"].map((item, index) => (
+            {operatingAreas.map((item, index) => (
               <div className="rounded-[1.4rem] border border-[#d8e8d3] bg-[#fbfff8]/80 px-5 py-4 shadow-[0_18px_50px_rgba(4,41,31,0.04)]" key={item}>
                 <p className="text-xs font-black uppercase tracking-[0.16em] text-[#9aa797]">0{index + 1}</p>
                 <p className="mt-2 font-black text-[#063f2c]">{item}</p>
@@ -142,7 +144,7 @@ export function DashboardPreview() {
                 </div>
                 <div className="relative mt-10 flex h-72 items-end gap-3">
                   <div className="sf-scan-line" />
-                  {[42, 68, 54, 86, 61, 92, 74, 98].map((height, index) => (
+                  {settlementWindowHeights.map((height, index) => (
                     <div className="flex flex-1 flex-col items-center gap-3" key={`${height}-${index}`}>
                       <div
                         className="sf-chart-bar w-full rounded-t-2xl bg-gradient-to-t from-[#20a867] to-[#b9ff7a]"

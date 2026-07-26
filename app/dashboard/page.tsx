@@ -11,6 +11,8 @@ import { getPaymentModeLabel } from "@/lib/paymentMode";
 import { buildSharedInvoicePayPath } from "@/lib/sharedInvoiceLink";
 import { useDashboard } from "@/hooks/useDashboard";
 
+const loadingStatLabels = ["Total Received", "Paid Invoices", "Pending Invoices", "Total Volume"] as const;
+
 export default function DashboardPage() {
   const { address, incomingInvoices, invoices, isReady, livePayment, paymentMode, stats } = useDashboard();
   const recentTransactions = invoices.filter((invoice) => invoice.status === "paid");
@@ -46,7 +48,7 @@ export default function DashboardPage() {
           <DashboardStats stats={stats} />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {["Total Received", "Paid Invoices", "Pending Invoices", "Total Volume"].map((label) => (
+            {loadingStatLabels.map((label) => (
               <article
                 className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
                 key={label}

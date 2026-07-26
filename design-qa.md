@@ -27,6 +27,26 @@ final result: passed
 
 ---
 
+# Regression QA — Presentation Refactor
+
+## Evidence
+
+- Baselines: `tmp/refactor-baseline/{home-desktop,home-mobile,dashboard-desktop,invoice-new-desktop,pay-desktop,receipt-desktop}.png`
+- Post-refactor captures: `tmp/refactor-post/{home-desktop,home-mobile,dashboard-desktop,invoice-new-desktop,pay-desktop,receipt-desktop}.png`
+- Capture environment: fresh Edge headless profiles against the rebuilt production server, 5-second virtual-time budget; 1600 × 1200 for all desktop routes and 500 × 1200 for the mobile homepage.
+- Routes: `/`, `/dashboard`, `/invoice/new`, `/pay/af-1029`, and `/receipt/af-1001`.
+
+## Findings
+
+- P0: none.
+- P1: none.
+- P2: none.
+- P3: fresh production captures of the animated homepage and invoice form differ at the pixel/hash level while preserving the same visible copy, DOM-driven layout, typography, colors, controls, and responsive behavior. The dashboard invoice-card order reflects pre-existing data ordering outside this task’s presentation-only diff; the card layout and controls are unchanged. The pay and receipt captures are byte-identical to the baseline.
+
+final result: passed
+
+---
+
 # Design QA — Homepage Mint Color System
 
 ## Evidence
