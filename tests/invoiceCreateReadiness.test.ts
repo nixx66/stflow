@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   getInvoiceCreateReadiness,
   isValidInvoiceWalletAddress
@@ -40,4 +41,13 @@ test("accepts valid EVM addresses without requiring checksum casing", () => {
     isValidInvoiceWalletAddress("0x742d35Cc6634C0532925a3b844Bc9e7595f2bD88"),
     true
   );
+});
+
+test("keeps invoice field source order stable", () => {
+  const source = readFileSync("components/invoice/InvoiceFields.tsx", "utf8");
+  const fields = ["customerName", "customerWallet", "title", "description", "amount", "expiresAt", "memo"];
+  const positions = fields.map((field) => source.indexOf(`change(\"${field}\"`));
+
+  assert.equal(positions.every((position) => position >= 0), true);
+  assert.deepEqual([...positions].sort((left, right) => left - right), positions);
 });

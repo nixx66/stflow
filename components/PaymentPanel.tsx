@@ -16,14 +16,22 @@ import { Invoice } from "@/types/invoice";
 import { StatusBadge } from "./StatusBadge";
 import { WalletStatusCard } from "./wallet/WalletStatusCard";
 
-const stageCopy = {
-  idle: "Ready for mock payment authorization",
-  wallet: "Authorizing mock USDC payment...",
-  submitted: "Transaction submitted...",
-  confirming: "Confirming settlement state...",
-  success: "Payment successful",
-  error: "Payment needs attention"
-};
+function stageMessage(stage: ReturnType<typeof usePayInvoice>["stage"]) {
+  switch (stage) {
+    case "wallet":
+      return "Authorizing mock USDC payment...";
+    case "submitted":
+      return "Transaction submitted...";
+    case "confirming":
+      return "Confirming settlement state...";
+    case "success":
+      return "Payment successful";
+    case "error":
+      return "Payment needs attention";
+    default:
+      return "Ready for mock payment authorization";
+  }
+}
 
 export function PaymentPanel({ invoice }: { invoice: Invoice }) {
   const router = useRouter();
@@ -34,21 +42,29 @@ export function PaymentPanel({ invoice }: { invoice: Invoice }) {
     stage,
     txHash,
     error,
-    isPaying,
     paymentMode,
     livePayment,
     payerConnected,
     payerChainId
   } = usePayInvoice(invoice);
+  const expiresAt = invoice.expiresAt;
+  const expiresAtTime = expiresAt ? new Date(expiresAt).getTime() : Number.NaN;
+  const expiryCanChange =
+    invoice.status === "pending" &&
+    !Number.isNaN(expiresAtTime) &&
+    expiresAtTime > now.getTime();
+
   useEffect(() => {
+    if (!expiryCanChange) return;
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [expiryCanChange]);
 
   const effectiveStatus = getInvoiceStatus(invoice, now);
   const paymentEligibility = getPaymentEligibility(invoice, now);
   const isPaid = effectiveStatus === "paid";
   const isExpired = effectiveStatus === "expired";
+  const isPaying = !["idle", "success", "error"].includes(stage);
   const requiresWallet = livePayment && !payerConnected;
   const payerAuthorization = livePayment
     ? getPayerAuthorization(invoice, connectedPayerWallet)
@@ -127,9 +143,7 @@ export function PaymentPanel({ invoice }: { invoice: Invoice }) {
         </div>
         <div className="flex justify-between gap-4">
           <dt className="text-muted">Status</dt>
-          <dd className="font-medium text-ink">
-            {isExpired ? "Expired" : isPaid ? "Paid" : stageCopy[stage]}
-          </dd>
+          <dd className="font-medium text-ink">{isExpired ? "Expired" : isPaid ? "Paid" : stageMessage(stage)}</dd>
         </div>
         {livePayment ? (
           <div className="flex justify-between gap-4">
@@ -181,7 +195,7 @@ export function PaymentPanel({ invoice }: { invoice: Invoice }) {
                 ? "Payment successful"
                 : livePayment
                   ? "Real payment mode is enabled for this checkout."
-                  : stageCopy[stage]}
+                  : stageMessage(stage)}
           </p>
         </div>
         {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
