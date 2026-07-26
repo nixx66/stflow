@@ -42,57 +42,27 @@ export function getPaymentEligibility(invoice: Invoice, now = new Date()) {
   return { canPay: true, reason: null };
 }
 
-function normalizeWallet(wallet?: string | null) {
-  const trimmedWallet = wallet?.trim();
-  return trimmedWallet ? trimmedWallet.toLowerCase() : undefined;
-}
+const walletKey = (wallet?: string | null) => wallet?.trim().toLowerCase() || undefined;
 
 export function getInvoiceWalletRole(invoice: Invoice, wallet?: string | null): WalletRole {
-  const normalizedWallet = normalizeWallet(wallet);
+  const current = walletKey(wallet);
+  const merchant = walletKey(invoice.merchantWallet);
+  const customer = walletKey(invoice.customerWallet);
 
-  if (!normalizedWallet) return "unknown";
-
-  if (normalizedWallet === normalizeWallet(invoice.merchantWallet)) {
-    return "merchant";
-  }
-
-  if (invoice.customerWallet && normalizedWallet === normalizeWallet(invoice.customerWallet)) {
-    return "designated_payer";
-  }
-
+  if (!current) return "unknown";
+  if (current === merchant) return "merchant";
+  if (current === customer) return "designated_payer";
   return "other";
 }
 
 export function getPayerAuthorization(invoice: Invoice, wallet?: string | null) {
-  const normalizedWallet = normalizeWallet(wallet);
+  const current = walletKey(wallet);
+  const merchant = walletKey(invoice.merchantWallet);
+  const customer = walletKey(invoice.customerWallet);
+  const expectedWallet = invoice.customerWallet;
 
-  if (!normalizedWallet) {
-    return {
-      canPay: false,
-      reason: "wallet_required" as const,
-      expectedWallet: invoice.customerWallet
-    };
-  }
-
-  if (normalizedWallet === normalizeWallet(invoice.merchantWallet)) {
-    return {
-      canPay: false,
-      reason: "merchant_wallet" as const,
-      expectedWallet: invoice.customerWallet
-    };
-  }
-
-  if (invoice.customerWallet && normalizedWallet !== normalizeWallet(invoice.customerWallet)) {
-    return {
-      canPay: false,
-      reason: "wrong_payer_wallet" as const,
-      expectedWallet: invoice.customerWallet
-    };
-  }
-
-  return {
-    canPay: true,
-    reason: null,
-    expectedWallet: invoice.customerWallet
-  };
+  if (!current) return { canPay: false, reason: "wallet_required" as const, expectedWallet };
+  if (current === merchant) return { canPay: false, reason: "merchant_wallet" as const, expectedWallet };
+  if (customer && current !== customer) return { canPay: false, reason: "wrong_payer_wallet" as const, expectedWallet };
+  return { canPay: true, reason: null, expectedWallet };
 }

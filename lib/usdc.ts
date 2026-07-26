@@ -32,9 +32,3 @@ export const usdcAbi = [
     outputs: [{ name: "", type: "uint256" }]
   }
 ] as const;
-
-// Future live payment path:
-// 1. Use ERC-20 USDC decimals (6) for invoice amounts.
-// 2. parseUnits(invoice.amount, USDC_DECIMALS).
-// 3. writeContract({ address: USDC_ADDRESS, abi: usdcAbi, functionName: "transfer", args: [merchantWallet, amount] }).
-// 4. Wait for the receipt, then persist invoice status and tx hash.

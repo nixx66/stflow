@@ -12,7 +12,7 @@ export const DEFAULT_INVOICE_STORE_PATH =
   process.env.STFLOW_INVOICE_STORE_PATH ??
   join(storeRoot, ".stflow-data", "invoices.json");
 
-let invoiceStoreMutation = Promise.resolve();
+let writeQueue = Promise.resolve();
 
 export function isInvoiceRecord(value: unknown): value is Invoice {
   if (!value || typeof value !== "object") return false;
@@ -30,19 +30,21 @@ export function isInvoiceRecord(value: unknown): value is Invoice {
   );
 }
 
-function normalizeStorePayload(value: unknown): Invoice[] {
+function parseStore(value: unknown): Invoice[] {
   if (!Array.isArray(value)) return [];
   return value.filter(isInvoiceRecord);
+}
+
+function isMissingFile(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
 export async function readInvoiceStore(storePath = DEFAULT_INVOICE_STORE_PATH) {
   try {
     const payload = await readFile(storePath, "utf8");
-    return normalizeStorePayload(JSON.parse(payload));
+    return parseStore(JSON.parse(payload));
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return [];
-    }
+    if (isMissingFile(error)) return [];
 
     if (error instanceof SyntaxError) {
       const corruptPath = `${storePath}.corrupt-${Date.now()}`;
@@ -62,18 +64,18 @@ async function writeInvoiceStore(invoices: Invoice[], storePath = DEFAULT_INVOIC
 }
 
 export async function upsertInvoiceInStore(invoice: Invoice, storePath = DEFAULT_INVOICE_STORE_PATH) {
-  const mutation = invoiceStoreMutation.then(async () => {
+  const mutation = writeQueue.then(async () => {
     const invoices = await readInvoiceStore(storePath);
     const nextInvoices = [
       invoice,
-      ...invoices.filter((storedInvoice) => storedInvoice.id !== invoice.id)
+      ...invoices.filter((current) => current.id !== invoice.id)
     ];
 
     await writeInvoiceStore(nextInvoices, storePath);
     return invoice;
   });
 
-  invoiceStoreMutation = mutation.then(
+  writeQueue = mutation.then(
     () => undefined,
     () => undefined
   );

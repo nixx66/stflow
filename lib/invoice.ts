@@ -17,12 +17,12 @@ export type CreateInvoiceInput = {
   expiresAt?: string;
 };
 
-function isBrowser() {
+function inBrowser() {
   return typeof window !== "undefined";
 }
 
-function writeInvoicesToBrowserStorage(invoices: Invoice[]) {
-  if (!isBrowser()) return;
+function writeStoredInvoices(invoices: Invoice[]) {
+  if (!inBrowser()) return;
 
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(invoices));
@@ -31,8 +31,8 @@ function writeInvoicesToBrowserStorage(invoices: Invoice[]) {
   }
 }
 
-function notifyInvoiceStorageChanged() {
-  if (!isBrowser()) return;
+function emitInvoiceChange() {
+  if (!inBrowser()) return;
 
   try {
     window.dispatchEvent(new Event("stflow:invoices"));
@@ -41,32 +41,32 @@ function notifyInvoiceStorageChanged() {
   }
 }
 
+function seedInvoices() {
+  const invoices = normalizeInvoiceStatuses(mockInvoices);
+  writeStoredInvoices(invoices);
+  return invoices;
+}
+
 export function getStoredInvoices(): Invoice[] {
-  if (!isBrowser()) return normalizeInvoiceStatuses(mockInvoices);
+  if (!inBrowser()) return normalizeInvoiceStatuses(mockInvoices);
 
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
 
-    if (!stored) {
-      const invoices = normalizeInvoiceStatuses(mockInvoices);
-      writeInvoicesToBrowserStorage(invoices);
-      return invoices;
-    }
+    if (!stored) return seedInvoices();
 
     const invoices = normalizeInvoiceStatuses(JSON.parse(stored) as Invoice[]);
-    writeInvoicesToBrowserStorage(invoices);
+    writeStoredInvoices(invoices);
     return invoices;
   } catch {
-    const invoices = normalizeInvoiceStatuses(mockInvoices);
-    writeInvoicesToBrowserStorage(invoices);
-    return invoices;
+    return seedInvoices();
   }
 }
 
 export function saveStoredInvoices(invoices: Invoice[]) {
-  if (!isBrowser()) return;
-  writeInvoicesToBrowserStorage(invoices);
-  notifyInvoiceStorageChanged();
+  if (!inBrowser()) return;
+  writeStoredInvoices(invoices);
+  emitInvoiceChange();
 }
 
 export function createMockInvoice(input: CreateInvoiceInput) {
@@ -95,6 +95,10 @@ export function getInvoiceById(invoiceId: string) {
   return getStoredInvoices().find((invoice) => invoice.id === invoiceId) ?? getV2InvoiceAsInvoice(invoiceId) ?? undefined;
 }
 
+function paidInvoice(invoice: Invoice, payerWallet: string, paymentTxHash: string, paidAt: string): Invoice {
+  return { ...invoice, payerWallet, paymentTxHash, paidAt, status: "paid" };
+}
+
 export function markInvoicePaid(
   invoiceId: string,
   payerWallet: string,
@@ -102,7 +106,7 @@ export function markInvoicePaid(
 ) {
   const invoices = getStoredInvoices();
   const paidAt = new Date().toISOString();
-  let paidInvoice: Invoice | null = null;
+  let updatedInvoice: Invoice | null = null;
   let foundInvoice = false;
   const nextInvoices = invoices.map((invoice) => {
     const normalizedInvoice = normalizeInvoiceStatus(invoice);
@@ -116,15 +120,8 @@ export function markInvoicePaid(
       return normalizedInvoice;
     }
 
-    paidInvoice = {
-      ...normalizedInvoice,
-      payerWallet,
-      paymentTxHash,
-      paidAt,
-      status: "paid" as const
-    };
-
-    return paidInvoice;
+    updatedInvoice = paidInvoice(normalizedInvoice, payerWallet, paymentTxHash, paidAt);
+    return updatedInvoice;
   });
 
   if (!foundInvoice) {
@@ -135,20 +132,14 @@ export function markInvoicePaid(
       return null;
     }
 
-    paidInvoice = {
-      ...fallbackInvoice,
-      payerWallet,
-      paymentTxHash,
-      paidAt,
-      status: "paid" as const
-    };
+    updatedInvoice = paidInvoice(fallbackInvoice, payerWallet, paymentTxHash, paidAt);
 
-    saveStoredInvoices([paidInvoice, ...nextInvoices]);
-    return paidInvoice;
+    saveStoredInvoices([updatedInvoice, ...nextInvoices]);
+    return updatedInvoice;
   }
 
   saveStoredInvoices(nextInvoices);
-  return paidInvoice;
+  return updatedInvoice;
 }
 
 export function buildReceipt(invoice: Invoice): Receipt | null {
@@ -183,16 +174,27 @@ export function filterInvoicesByPayer(invoices: Invoice[], wallet?: string) {
 }
 
 export function mergeInvoicesById(preferredInvoices: Invoice[], fallbackInvoices: Invoice[]) {
-  const seenInvoiceIds = new Set<string>();
-  const mergedInvoices: Invoice[] = [];
+  const invoicesById = new Map<string, Invoice>();
+  const fallbackIds: string[] = [];
+  const preferredIds: string[] = [];
+  const preferredIdSet = new Set<string>();
 
-  [...preferredInvoices, ...fallbackInvoices].forEach((invoice) => {
-    if (seenInvoiceIds.has(invoice.id)) return;
-    seenInvoiceIds.add(invoice.id);
-    mergedInvoices.push(invoice);
-  });
+  for (const invoice of fallbackInvoices) {
+    if (invoicesById.has(invoice.id)) continue;
+    invoicesById.set(invoice.id, invoice);
+    fallbackIds.push(invoice.id);
+  }
 
-  return mergedInvoices;
+  for (const invoice of preferredInvoices) {
+    if (preferredIdSet.has(invoice.id)) continue;
+    invoicesById.set(invoice.id, invoice);
+    preferredIds.push(invoice.id);
+    preferredIdSet.add(invoice.id);
+  }
+
+  return [...preferredIds, ...fallbackIds.filter((id) => !preferredIdSet.has(id))].map(
+    (id) => invoicesById.get(id)!
+  );
 }
 
 export function createMockTxHash() {
