@@ -15,6 +15,7 @@ import { syncInvoiceToServer } from "@/lib/invoiceServerClient";
 import { getPayerAuthorization, getPaymentEligibility } from "@/lib/invoiceStatus";
 import { getPaymentMode, isLivePaymentMode } from "@/lib/paymentMode";
 import { USDC_ADDRESS, USDC_DECIMALS, usdcAbi } from "@/lib/usdc";
+import { payerError } from "@/lib/paymentError";
 import { Invoice } from "@/types/invoice";
 
 const MOCK_PAYER_WALLET = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";
@@ -28,6 +29,12 @@ export type PaymentStage =
   | "error";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function ensurePayable(invoice: Invoice) {
+  if (!getPaymentEligibility(invoice).canPay) {
+    throw new Error("Payment link has expired.");
+  }
+}
 
 export function usePayInvoice(invoice: Invoice) {
   const paymentMode = getPaymentMode();
@@ -44,10 +51,7 @@ export function usePayInvoice(invoice: Invoice) {
   const payMockInvoice = useCallback(async () => {
     try {
       setError(undefined);
-
-      if (!getPaymentEligibility(invoice).canPay) {
-        throw new Error("Payment link has expired.");
-      }
+      ensurePayable(invoice);
 
       setStage("wallet");
       await delay(900);
@@ -74,10 +78,7 @@ export function usePayInvoice(invoice: Invoice) {
   const payLiveInvoice = useCallback(async () => {
     try {
       setError(undefined);
-
-      if (!getPaymentEligibility(invoice).canPay) {
-        throw new Error("Payment link has expired.");
-      }
+      ensurePayable(invoice);
 
       if (paymentMode === "memo-transfer") {
         throw new Error("Memo transfer is reserved for the next integration step.");
@@ -90,15 +91,7 @@ export function usePayInvoice(invoice: Invoice) {
       const payerAuthorization = getPayerAuthorization(invoice, address);
 
       if (!payerAuthorization.canPay) {
-        if (payerAuthorization.reason === "merchant_wallet") {
-          throw new Error("Merchant wallet cannot pay its own invoice.");
-        }
-
-        if (payerAuthorization.reason === "wrong_payer_wallet") {
-          throw new Error("Switch to the payer wallet assigned to this invoice.");
-        }
-
-        throw new Error("Connect the payer wallet assigned to this invoice.");
+        throw new Error(payerError(payerAuthorization.reason ?? "wallet_required"));
       }
 
       if (!isAddress(invoice.merchantWallet)) {
@@ -136,20 +129,15 @@ export function usePayInvoice(invoice: Invoice) {
       void syncInvoiceToServer(paidInvoice);
       setStage("success");
       return paidInvoice;
-    } catch (caughtError) {
+    } catch (error) {
       setStage("error");
-      setError(caughtError instanceof Error ? caughtError.message : "Payment failed.");
+      setError(error instanceof Error ? error.message : "Payment failed.");
       return null;
     }
   }, [
     address,
     chainId,
-    invoice.amount,
-    invoice.expiresAt,
-    invoice.id,
-    invoice.merchantWallet,
-    invoice.customerWallet,
-    invoice.status,
+    invoice,
     isConnected,
     paymentMode,
     publicClient,

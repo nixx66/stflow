@@ -17,44 +17,49 @@ import {
 import { decodeSharedInvoice } from "@/lib/sharedInvoiceLink";
 import { Invoice } from "@/types/invoice";
 
+function saveInvoice(invoice: Invoice) {
+  const storedInvoices = getStoredInvoices();
+  saveStoredInvoices([invoice, ...storedInvoices.filter((item) => item.id !== invoice.id)]);
+}
+
 export function useInvoices() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    let isCurrent = true;
+    let active = true;
 
     const refresh = () => {
       try {
         const storedInvoices = getStoredInvoices();
-        if (isCurrent) {
+        if (active) {
           setInvoices(storedInvoices);
         }
         storedInvoices.forEach((invoice) => {
           void syncInvoiceToServer(invoice);
         });
       } finally {
-        if (isCurrent) {
+        if (active) {
           setIsReady(true);
         }
       }
     };
 
-    const refreshServerInvoices = async () => {
+    const loadServerInvoices = async () => {
       const serverInvoices = await fetchInvoicesFromServer();
-      if (!isCurrent || serverInvoices.length === 0) return;
+      if (!active || serverInvoices.length === 0) return;
 
-      setInvoices((currentInvoices) => mergeInvoicesById(serverInvoices, currentInvoices));
+      setInvoices((current) => mergeInvoicesById(serverInvoices, current));
       setIsReady(true);
     };
 
     refresh();
-    void refreshServerInvoices();
+    void loadServerInvoices();
     window.addEventListener("storage", refresh);
     window.addEventListener("stflow:invoices", refresh);
 
     return () => {
-      isCurrent = false;
+      active = false;
       window.removeEventListener("storage", refresh);
       window.removeEventListener("stflow:invoices", refresh);
     };
@@ -84,11 +89,7 @@ export function useInvoice(invoiceId: string, sharedInvoicePayload?: string | nu
     if (!isReady || !sharedInvoice) return;
     if (invoices.some((item) => item.id === sharedInvoice.id)) return;
 
-    const storedInvoices = getStoredInvoices();
-    saveStoredInvoices([
-      sharedInvoice,
-      ...storedInvoices.filter((item) => item.id !== sharedInvoice.id)
-    ]);
+    saveInvoice(sharedInvoice);
   }, [invoices, isReady, sharedInvoice]);
 
   const localInvoice = useMemo(() => {
@@ -98,31 +99,27 @@ export function useInvoice(invoiceId: string, sharedInvoicePayload?: string | nu
   useEffect(() => {
     if (!isReady || localInvoice) return;
 
-    let isCurrent = true;
+    let active = true;
     setIsFetchingRemote(true);
 
     fetchInvoiceFromServer(invoiceId)
       .then((invoice) => {
-        if (!isCurrent) return;
+        if (!active) return;
         setRemoteInvoice(invoice);
 
         if (invoice) {
-          const storedInvoices = getStoredInvoices();
-          saveStoredInvoices([
-            invoice,
-            ...storedInvoices.filter((item) => item.id !== invoice.id)
-          ]);
+          saveInvoice(invoice);
         }
       })
       .catch(() => {
-        if (isCurrent) setRemoteInvoice(null);
+        if (active) setRemoteInvoice(null);
       })
       .finally(() => {
-        if (isCurrent) setIsFetchingRemote(false);
+        if (active) setIsFetchingRemote(false);
       });
 
     return () => {
-      isCurrent = false;
+      active = false;
     };
   }, [invoiceId, isReady, localInvoice]);
 

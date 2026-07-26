@@ -16,28 +16,23 @@ export function useDashboard() {
 
   const merchantInvoices = useMemo(
     () => filterInvoicesByMerchant(invoices, address),
-    [address, invoices]
+    [invoices, address]
   );
 
   const incomingInvoices = useMemo(
     () => filterInvoicesByPayer(invoices, address).filter((invoice) => invoice.status === "pending"),
-    [address, invoices]
+    [invoices, address]
   );
 
   const stats = useMemo(() => {
     const paid = merchantInvoices.filter((invoice) => invoice.status === "paid");
     const pending = merchantInvoices.filter((invoice) => invoice.status === "pending");
-    const totalReceived = paid.reduce((sum, invoice) => sum + Number(invoice.amount), 0);
-    const totalVolume = merchantInvoices.reduce(
-      (sum, invoice) => sum + Number(invoice.amount),
-      0
-    );
 
     return {
-      totalReceived,
+      totalReceived: paid.reduce((sum, invoice) => sum + Number(invoice.amount), 0),
       paidInvoices: paid.length,
       pendingInvoices: pending.length,
-      totalVolume
+      totalVolume: merchantInvoices.reduce((sum, invoice) => sum + Number(invoice.amount), 0)
     };
   }, [merchantInvoices]);
 
