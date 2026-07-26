@@ -20,12 +20,11 @@ export async function GET(_request: Request, context: RouteContext) {
 
 export async function PATCH(request: Request, context: RouteContext) {
   const { invoiceId } = await context.params;
-  const payload = await request.json().catch(() => null);
+  const invoice = await request.json().catch(() => null);
 
-  if (!isInvoiceRecord(payload) || payload.id !== invoiceId) {
+  if (!isInvoiceRecord(invoice) || invoice.id !== invoiceId) {
     return NextResponse.json({ error: "Invalid invoice payload" }, { status: 400 });
   }
 
-  const invoice = await upsertInvoiceInStore(payload);
-  return NextResponse.json({ invoice });
+  return NextResponse.json({ invoice: await upsertInvoiceInStore(invoice) });
 }

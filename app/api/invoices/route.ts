@@ -7,12 +7,11 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const payload = await request.json().catch(() => null);
+  const invoice = await request.json().catch(() => null);
 
-  if (!isInvoiceRecord(payload)) {
+  if (!isInvoiceRecord(invoice)) {
     return NextResponse.json({ error: "Invalid invoice payload" }, { status: 400 });
   }
 
-  const invoice = await upsertInvoiceInStore(payload);
-  return NextResponse.json({ invoice });
+  return NextResponse.json({ invoice: await upsertInvoiceInStore(invoice) });
 }

@@ -10,13 +10,13 @@ type InvoicesResponse = {
 
 const INVOICE_FETCH_TIMEOUT_MS = 5000;
 
-function createTimeoutSignal(timeoutMs: number) {
+function withTimeout(timeoutMs: number) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   return {
     signal: controller.signal,
-    clear: () => clearTimeout(timeout)
+    done: () => clearTimeout(timeout)
   };
 }
 
@@ -37,12 +37,12 @@ export async function syncInvoiceToServer(invoice: Invoice) {
 }
 
 export async function fetchInvoiceFromServer(invoiceId: string) {
-  const timeout = createTimeoutSignal(INVOICE_FETCH_TIMEOUT_MS);
+  const { signal, done } = withTimeout(INVOICE_FETCH_TIMEOUT_MS);
 
   try {
     const response = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}`, {
       cache: "no-store",
-      signal: timeout.signal
+      signal
     });
 
     if (response.status === 404) return null;
@@ -51,7 +51,7 @@ export async function fetchInvoiceFromServer(invoiceId: string) {
     const payload = (await response.json()) as InvoiceResponse;
     return payload.invoice ?? null;
   } finally {
-    timeout.clear();
+    done();
   }
 }
 
