@@ -36,12 +36,20 @@ final result: passed
 - Capture environment: fresh Edge headless profiles against the rebuilt production server, 5-second virtual-time budget; 1600 × 1200 for all desktop routes and 500 × 1200 for the mobile homepage. The mobile baseline was recaptured from the clean main checkout at `a04ab54` on port 3100 and the post-refactor image from clean `19dcc49` on port 3101 using the identical Edge version and flags: `--headless=new`, `--disable-gpu`, `--hide-scrollbars`, `--force-device-scale-factor=1`, `--window-size=500,1200`, `--virtual-time-budget=5000`, fresh profiles, and top-of-page capture.
 - Routes: `/`, `/dashboard`, `/invoice/new`, `/pay/af-1029`, and `/receipt/af-1001`.
 
+### Final-review desktop recapture (supersedes earlier desktop evidence)
+
+- Clean baseline: main checkout `a04ab54` on port 3100. Clean post-refactor: `71e2c2c` on port 3101.
+- Both rebuilt production bundles used hash-matched ignored local environment configuration, the same explicit empty invoice-store path, fresh elevated Edge profiles, top-of-page capture, and a 10-second virtual-time budget.
+- Shared desktop conditions: 1600 x 1200, device scale 1, `--headless=new`, `--disable-gpu`, `--hide-scrollbars`, `--force-device-scale-factor=1`, `--force-color-profile=srgb`, `--window-size=1600,1200`, `--virtual-time-budget=10000`, and `--run-all-compositor-stages-before-draw`.
+- Accepted files replaced only after validation: `tmp/refactor-baseline/{home-desktop,dashboard-desktop,invoice-new-desktop}.png` and `tmp/refactor-post/{home-desktop,dashboard-desktop,invoice-new-desktop}.png`. All six are nonblank 1600 x 1200 PNGs.
+
 ## Findings
 
 - P0: none.
 - P1: none.
 - P2: none.
-- P3: the dashboard invoice-card order reflects pre-existing data ordering outside this task’s presentation-only diff; the card layout and controls are unchanged. The pay and receipt captures are byte-identical to the baseline. The recaptured mobile homepage pair has identical no-scrollbar viewport conditions and the same two-line `without chaos.` headline wrap.
+- Final-review verdict (supersedes all preceding desktop P3 characterization): P3 none. The dashboard pair is pixel-identical. The homepage and invoice-new pairs have identical layout, copy, and class treatments; their only measured variance is in existing animated scene backgrounds (home: 20,530 of 1,920,000 changed pixels, 1.069271%, mean absolute RGBA delta 0.012616; invoice new: 283,372, 14.758958%, mean absolute RGBA delta 0.555464). Pay and receipt remain byte-identical; the matched mobile homepage retains its no-scrollbar two-line headline wrap.
+- Historical pre-recapture note (superseded by the final-review verdict above): dashboard card order was observed before the hydration-stable desktop recapture. The pay and receipt captures are byte-identical to the baseline; the recaptured mobile homepage pair has identical no-scrollbar viewport conditions and the same two-line `without chaos.` headline wrap.
 
 final result: passed
 
