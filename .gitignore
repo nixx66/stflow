@@ -21,3 +21,4 @@ coverage/
 .codex/
 .npm-cache/
 tmp/
+.worktrees/
