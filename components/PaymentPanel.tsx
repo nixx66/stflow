@@ -6,9 +6,8 @@ import { useEffect, useState } from "react";
 import { useAccount } from "wagmi";
 import { formatCurrency, shortenAddress } from "@/lib/format";
 import {
+  getCheckoutAuthorization,
   getInvoiceStatus,
-  getPayerAuthorization,
-  getPaymentEligibility
 } from "@/lib/invoiceStatus";
 import { getPaymentButtonLabel, getPaymentModeLabel } from "@/lib/paymentMode";
 import { usePayInvoice } from "@/hooks/usePayInvoice";
@@ -61,22 +60,23 @@ export function PaymentPanel({ invoice }: { invoice: Invoice }) {
   }, [expiryCanChange]);
 
   const effectiveStatus = getInvoiceStatus(invoice, now);
-  const paymentEligibility = getPaymentEligibility(invoice, now);
   const isPaid = effectiveStatus === "paid";
   const isExpired = effectiveStatus === "expired";
   const isPaying = !["idle", "success", "error"].includes(stage);
-  const requiresWallet = livePayment && !payerConnected;
-  const payerAuthorization = livePayment
-    ? getPayerAuthorization(invoice, connectedPayerWallet)
-    : { canPay: true, reason: null, expectedWallet: invoice.customerWallet };
-  const canSubmitPayment = paymentEligibility.canPay && !requiresWallet && payerAuthorization.canPay;
+  const checkoutAuthorization = getCheckoutAuthorization(
+    invoice,
+    connectedPayerWallet,
+    now
+  );
+  const requiresWallet = !payerConnected;
+  const canSubmitPayment = checkoutAuthorization.canPay;
 
   const payerGuardMessage =
-    payerAuthorization.reason === "merchant_wallet"
+    checkoutAuthorization.payerReason === "merchant_wallet"
       ? "This merchant wallet created the invoice. Send the payment link to the payer wallet to complete checkout."
-      : payerAuthorization.reason === "wrong_payer_wallet"
-        ? `This checkout is assigned to ${shortenAddress(payerAuthorization.expectedWallet ?? "", 6)}. Switch to that payer wallet before paying.`
-        : payerAuthorization.reason === "wallet_required"
+      : checkoutAuthorization.payerReason === "wrong_payer_wallet"
+        ? `This checkout is assigned to ${shortenAddress(checkoutAuthorization.expectedWallet ?? "", 6)}. Switch to that payer wallet before paying.`
+        : checkoutAuthorization.payerReason === "wallet_required"
           ? "Connect the payer wallet assigned to this invoice before paying."
           : null;
 
@@ -85,11 +85,11 @@ export function PaymentPanel({ invoice }: { invoice: Invoice }) {
       ? "Invoice Expired"
       : isPaid
         ? "Already Paid"
-        : payerAuthorization.reason === "merchant_wallet"
+        : checkoutAuthorization.payerReason === "merchant_wallet"
           ? "Merchant wallet cannot pay"
-          : payerAuthorization.reason === "wrong_payer_wallet"
+          : checkoutAuthorization.payerReason === "wrong_payer_wallet"
             ? "Switch to payer wallet"
-            : requiresWallet || payerAuthorization.reason === "wallet_required"
+            : requiresWallet || checkoutAuthorization.payerReason === "wallet_required"
               ? "Connect payer wallet"
               : getPaymentButtonLabel(paymentMode);
 

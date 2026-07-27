@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  getCheckoutAuthorization,
   getInvoiceWalletRole,
   getPayerAuthorization,
   getInvoiceStatus,
@@ -99,6 +100,26 @@ test("authorizes only the assigned payer wallet for invoice checkout", () => {
     reason: null,
     expectedWallet: invoice.customerWallet
   });
+});
+
+test("rejects a different connected wallet before mock checkout", () => {
+  const invoice = {
+    ...baseInvoice,
+    customerWallet: "0x0000000000000000000000000000000000000002"
+  };
+
+  assert.deepEqual(
+    getCheckoutAuthorization(
+      invoice,
+      "0x0000000000000000000000000000000000000003"
+    ),
+    {
+      canPay: false,
+      paymentReason: null,
+      payerReason: "wrong_payer_wallet",
+      expectedWallet: invoice.customerWallet
+    }
+  );
 });
 
 test("allows any non-merchant wallet when an invoice has no assigned payer", () => {

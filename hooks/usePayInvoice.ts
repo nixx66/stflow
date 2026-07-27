@@ -12,13 +12,11 @@ import {
 import { arcTestnet } from "@/lib/chains";
 import { createMockTxHash, markInvoicePaid } from "@/lib/invoice";
 import { syncInvoiceToServer } from "@/lib/invoiceServerClient";
-import { getPayerAuthorization, getPaymentEligibility } from "@/lib/invoiceStatus";
+import { getCheckoutAuthorization } from "@/lib/invoiceStatus";
 import { getPaymentMode, isLivePaymentMode } from "@/lib/paymentMode";
 import { USDC_ADDRESS, USDC_DECIMALS, usdcAbi } from "@/lib/usdc";
 import { payerError } from "@/lib/paymentError";
 import { Invoice } from "@/types/invoice";
-
-const MOCK_PAYER_WALLET = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";
 
 export type PaymentStage =
   | "idle"
@@ -29,12 +27,6 @@ export type PaymentStage =
   | "error";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function ensurePayable(invoice: Invoice) {
-  if (!getPaymentEligibility(invoice).canPay) {
-    throw new Error("Payment link has expired.");
-  }
-}
 
 export function usePayInvoice(invoice: Invoice) {
   const paymentMode = getPaymentMode();
@@ -51,7 +43,19 @@ export function usePayInvoice(invoice: Invoice) {
   const payMockInvoice = useCallback(async () => {
     try {
       setError(undefined);
-      ensurePayable(invoice);
+
+      if (!isConnected || !address) {
+        throw new Error(payerError("wallet_required"));
+      }
+
+      const authorization = getCheckoutAuthorization(invoice, address);
+      if (!authorization.canPay) {
+        throw new Error(
+          authorization.paymentReason
+            ? "Payment link has expired or is no longer payable."
+            : payerError(authorization.payerReason ?? "wallet_required")
+        );
+      }
 
       setStage("wallet");
       await delay(900);
@@ -61,24 +65,23 @@ export function usePayInvoice(invoice: Invoice) {
       await delay(900);
       setStage("confirming");
       await delay(1000);
-      const paidInvoice = markInvoicePaid(invoice.id, invoice.customerWallet ?? MOCK_PAYER_WALLET, mockTxHash);
+      const paidInvoice = markInvoicePaid(invoice.id, address, mockTxHash);
       if (!paidInvoice) {
         throw new Error("Invoice is not payable");
       }
       void syncInvoiceToServer(paidInvoice);
       setStage("success");
       return paidInvoice;
-    } catch {
+    } catch (error) {
       setStage("error");
-      setError("Payment failed because the payment link is expired or no longer payable.");
+      setError(error instanceof Error ? error.message : "Payment failed.");
       return null;
     }
-  }, [invoice]);
+  }, [address, invoice, isConnected]);
 
   const payLiveInvoice = useCallback(async () => {
     try {
       setError(undefined);
-      ensurePayable(invoice);
 
       if (paymentMode === "memo-transfer") {
         throw new Error("Memo transfer is reserved for the next integration step.");
@@ -88,10 +91,13 @@ export function usePayInvoice(invoice: Invoice) {
         throw new Error("Connect a payer wallet before sending real USDC.");
       }
 
-      const payerAuthorization = getPayerAuthorization(invoice, address);
-
-      if (!payerAuthorization.canPay) {
-        throw new Error(payerError(payerAuthorization.reason ?? "wallet_required"));
+      const authorization = getCheckoutAuthorization(invoice, address);
+      if (!authorization.canPay) {
+        throw new Error(
+          authorization.paymentReason
+            ? "Payment link has expired or is no longer payable."
+            : payerError(authorization.payerReason ?? "wallet_required")
+        );
       }
 
       if (!isAddress(invoice.merchantWallet)) {

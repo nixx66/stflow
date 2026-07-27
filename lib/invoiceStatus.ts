@@ -66,3 +66,19 @@ export function getPayerAuthorization(invoice: Invoice, wallet?: string | null) 
   if (customer && current !== customer) return { canPay: false, reason: "wrong_payer_wallet" as const, expectedWallet };
   return { canPay: true, reason: null, expectedWallet };
 }
+
+export function getCheckoutAuthorization(
+  invoice: Invoice,
+  wallet?: string | null,
+  now = new Date()
+) {
+  const payment = getPaymentEligibility(invoice, now);
+  const payer = getPayerAuthorization(invoice, wallet);
+
+  return {
+    canPay: payment.canPay && payer.canPay,
+    paymentReason: payment.reason,
+    payerReason: payer.reason,
+    expectedWallet: payer.expectedWallet
+  };
+}
