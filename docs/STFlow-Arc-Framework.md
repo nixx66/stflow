@@ -165,18 +165,6 @@ activity_events
 
 Later, add an indexer or server job to verify transaction receipts instead of trusting only the browser.
 
-## Circle / Arc Skills To Use
-
-Recommended AI skills from Circle's public skills repository:
-
-- `use-arc`: Arc chain config, wagmi/viem integration, deployment patterns
-- `use-usdc`: USDC balances, transfers, approvals, verification
-- `use-smart-contract-platform`: later contract deployment or monitoring
-- `use-circle-wallets`: if you want embedded wallets for non-crypto users
-- `bridge-stablecoin` / `unify-balance`: later if STFlow supports crosschain payments
-
-For STFlow V1-V3, the most relevant are `use-arc` and `use-usdc`.
-
 ## Suggested App Structure
 
 ```text

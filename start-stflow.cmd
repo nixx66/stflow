@@ -3,23 +3,18 @@ setlocal
 title Start STFlow
 cd /d "%~dp0"
 
-set "BUNDLED_NODE=C:\Users\yaoxt\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
 set "NEXT_BIN=%~dp0node_modules\next\dist\bin\next"
 
-if exist "%BUNDLED_NODE%" (
-  set "NODE_EXE=%BUNDLED_NODE%"
-) else (
-  where node >nul 2>nul
-  if errorlevel 1 (
-    echo.
-    echo Node.js was not found.
-    echo Please install Node.js, then run this file again.
-    echo.
-    pause
-    exit /b 1
-  )
-  set "NODE_EXE=node"
+where node >nul 2>nul
+if errorlevel 1 (
+  echo.
+  echo Node.js was not found.
+  echo Please install Node.js, then run this file again.
+  echo.
+  pause
+  exit /b 1
 )
+set "NODE_EXE=node"
 
 if not exist "%NEXT_BIN%" (
   echo.

@@ -2,10 +2,10 @@
 
 ## Evidence
 
-- Approved source: `D:\Codex\.codex\generated_images\019f7e0c-8fff-7402-887a-b5c37bdc6ce7\exec-c0f1ca2d-4c91-4847-b9f5-be7afc8c5738.png`
-- Desktop implementation: `D:\360MoveData\Users\yaoxt\Documents\ArcFlow\tmp\design-qa\homepage-desktop-production.png`
-- Responsive implementation: `D:\360MoveData\Users\yaoxt\Documents\ArcFlow\tmp\design-qa\homepage-mobile-production-final.png`
-- Combined comparison: `D:\360MoveData\Users\yaoxt\Documents\ArcFlow\tmp\design-qa\reference-vs-implementation.png`
+- Approved source: tall mint invoice showcase reference
+- Desktop implementation: production desktop capture
+- Responsive implementation: production mobile capture
+- Combined comparison: reference and implementation comparison
 - Desktop viewport: 2048 × 2800
 - Responsive viewport: 500 × 3000
 - State: homepage, default logged-out presentation

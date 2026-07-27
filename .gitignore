@@ -16,9 +16,7 @@ coverage/
 .env*
 !.env.example
 
-# Local Codex and development artifacts
-.agents/
-.codex/
+# Local development artifacts
 .npm-cache/
 tmp/
 .worktrees/

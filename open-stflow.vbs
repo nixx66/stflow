@@ -1,19 +1,14 @@
 Option Explicit
 
-Dim shell, fso, root, bundledNode, nodeExe, serverScript, command, url, ready, attempt, http
+Dim shell, fso, root, nodeExe, serverScript, command, url, ready, attempt, http
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
 root = fso.GetParentFolderName(WScript.ScriptFullName)
-bundledNode = "C:\Users\yaoxt\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
 serverScript = root & "\stflow-server.js"
 url = "http://127.0.0.1:3001"
 
-If fso.FileExists(bundledNode) Then
-  nodeExe = bundledNode
-Else
-  nodeExe = "node"
-End If
+nodeExe = "node"
 
 If Not fso.FileExists(serverScript) Then
   MsgBox "stflow-server.js was not found.", 16, "STFlow"
