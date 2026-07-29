@@ -77,6 +77,7 @@ function rpcFixture(overrides: Record<string, unknown> = {}) {
       blockNumber: "0x2a",
       blockHash,
       from: deployer,
+      to: null,
     },
     eth_getTransactionByHash: {
       hash: tx,
@@ -170,6 +171,7 @@ test("verification rejects wrong chain, placeholder, failed receipt, and address
         blockNumber: "0x2a",
         blockHash,
         from: deployer,
+        to: null,
       },
     }),
     /address/i,
@@ -189,6 +191,22 @@ test("verification requires an exact contract-creation transaction", async () =>
     verify({ eth_getTransactionByHash: { ...base, to: registry } }),
     /create a contract/i,
   );
+  for (const to of [registry, undefined]) {
+    await assert.rejects(
+      verify({
+        eth_getTransactionReceipt: {
+          status: "0x1",
+          transactionHash: tx,
+          contractAddress: registry,
+          blockNumber: "0x2a",
+          blockHash,
+          from: deployer,
+          ...(to === undefined ? {} : { to }),
+        },
+      }),
+      /receipt must describe contract creation/i,
+    );
+  }
   await assert.rejects(
     verify({ eth_getTransactionByHash: { ...base, input: "0x6000" } }),
     /input/i,
@@ -214,6 +232,7 @@ test("verification requires an exact contract-creation transaction", async () =>
         blockNumber: "0x2a",
         blockHash,
         from: "0x0000000000000000000000000000000000000000",
+        to: null,
       },
     }),
     /placeholder/i,
@@ -228,6 +247,7 @@ test("verification requires an exact contract-creation transaction", async () =>
         blockNumber: "0x2a",
         blockHash: `0x${"00".repeat(32)}`,
         from: deployer,
+        to: null,
       },
     }),
     /placeholder/i,

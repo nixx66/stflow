@@ -249,6 +249,7 @@ export async function validateDeployment({ address, tx, request, rpc }) {
 
   const receipt = await rpc("eth_getTransactionReceipt", [tx]);
   if (!receipt || receipt.status !== "0x1") throw new Error("deployment receipt is missing or failed");
+  if (receipt.to !== null) throw new Error("deployment receipt must describe contract creation");
   if (receipt.transactionHash?.toLowerCase() !== tx.toLowerCase()) {
     throw new Error("receipt transaction does not match the requested hash");
   }
