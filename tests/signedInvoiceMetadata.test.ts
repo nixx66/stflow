@@ -57,22 +57,24 @@ function repo(): MetadataRepository & { rows: Map<string, Record<string, unknown
   let consumed = false;
   return {
     rows,
-    async consumeNonce(input) {
+    async persistAtomic(input) {
       if (
         consumed ||
         input.nonceHash !== hashNonce(nonce) ||
         input.wallet !== merchant.address.toLowerCase()
-      ) return false;
+      ) throw new Error("Nonce expired or already used.");
       consumed = true;
-      return true;
+      const row = input.row;
+      const existing = rows.get(row.invoice_id as string);
+      if (existing) {
+        if (JSON.stringify(existing) !== JSON.stringify(row)) throw new Error("conflict");
+        return "idempotent";
+      }
+      rows.set(row.invoice_id as string, row);
+      return "inserted";
     },
     async find(identity) {
       return rows.get(identity.invoiceId) ?? null;
-    },
-    async insert(row) {
-      if (rows.has(row.invoice_id as string)) return "conflict";
-      rows.set(row.invoice_id as string, row);
-      return "inserted";
     }
   };
 }
@@ -189,14 +191,16 @@ test("is idempotent for an identical saved request and rejects different metadat
   const repository = repo();
   const input = await request();
   await persistSignedInvoiceMetadata(input, deps(repository));
-  assert.equal((await persistSignedInvoiceMetadata(input, deps(repository))).idempotent, true);
+  const fresh = repo();
+  fresh.rows.set(invoiceId.toLowerCase(), repository.rows.get(invoiceId.toLowerCase())!);
+  assert.equal((await persistSignedInvoiceMetadata(input, deps(fresh))).idempotent, true);
 
   await assert.rejects(
     persistSignedInvoiceMetadata(
       await request({ metadata: { ...metadata, memo: "changed" } }),
       deps(repository)
     ),
-    /conflict|binding|hash/i
+    /conflict|binding|hash|challenge/i
   );
 });
 

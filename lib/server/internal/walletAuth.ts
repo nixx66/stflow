@@ -143,3 +143,18 @@ export async function verifyWalletAuthorization(input: {
     nonceHash: hashNonce(parsed.nonce)
   };
 }
+
+export async function verifyChallengeAuthorization(input: {
+  message: string;
+  signature: Hex;
+  expectedAction: WalletAction;
+  expectedRegistry: Address;
+  expectedPayloadBinding: Hex;
+  now?: Date;
+}) {
+  const parsed = parseChallenge(input.message);
+  return verifyWalletAuthorization({
+    ...input,
+    expectedWallet: parsed.wallet
+  });
+}

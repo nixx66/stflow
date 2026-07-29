@@ -16,7 +16,7 @@ import {
   invoiceIdFromReference,
   type InvoiceMetadata
 } from "../../invoiceMetadata.ts";
-import { verifyWalletAuthorization } from "./walletAuth.ts";
+import { verifyChallengeAuthorization } from "./walletAuth.ts";
 
 type Identity = {
   chainId: number;
@@ -25,14 +25,12 @@ type Identity = {
 };
 
 export interface MetadataRepository {
-  consumeNonce(input: {
+  persistAtomic(input: {
     wallet: string;
     nonceHash: string;
-    action: "create_invoice";
-    now: string;
-  }): Promise<boolean>;
+    row: Record<string, unknown>;
+  }): Promise<"inserted" | "idempotent">;
   find(identity: Identity): Promise<Record<string, unknown> | null>;
-  insert(row: Record<string, unknown>): Promise<"inserted" | "conflict">;
 }
 
 type Rpc = {
@@ -167,6 +165,14 @@ export async function persistSignedInvoiceMetadata(
   }
 ) {
   const metadata = validateInput(input);
+  const authorization = await verifyChallengeAuthorization({
+    message: input.challenge,
+    signature: input.signature,
+    expectedAction: "create_invoice",
+    expectedRegistry: deps.config.registry,
+    expectedPayloadBinding: metadataPayloadBinding(input),
+    now: deps.now?.()
+  });
   const receipt = await deps.rpc.getReceipt({ hash: input.txHash });
   if (receipt.status !== "success") {
     throw new MetadataValidationError("Invoice creation transaction reverted.");
@@ -193,6 +199,9 @@ export async function persistSignedInvoiceMetadata(
   }
 
   const event = events[0];
+  if (!isAddressEqual(authorization.wallet, event.merchant)) {
+    throw new MetadataValidationError("Authorized wallet is not the invoice merchant.");
+  }
   const expectedHash = hashInvoiceMetadata(metadata);
   if (event.metadataHash.toLowerCase() !== expectedHash.toLowerCase()) {
     throw new MetadataValidationError("Invoice metadata hash does not match the chain.");
@@ -227,40 +236,12 @@ export async function persistSignedInvoiceMetadata(
     create_log_index: event.logIndex,
     indexed_status: "pending"
   };
-  const identity = { chainId: deps.config.chainId, registry, invoiceId: id };
-
-  const authorization = await verifyWalletAuthorization({
-    message: input.challenge,
-    signature: input.signature,
-    expectedWallet: event.merchant,
-    expectedAction: "create_invoice",
-    expectedRegistry: deps.config.registry,
-    expectedPayloadBinding: metadataPayloadBinding(input),
-    now: deps.now?.()
-  });
-
-  const existing = await deps.repository.find(identity);
-  if (existing) {
-    if (!sameRow(existing, row)) throw new MetadataConflictError();
-    return { invoiceId: id, idempotent: true };
-  }
-
-  const consumed = await deps.repository.consumeNonce({
+  const result = await deps.repository.persistAtomic({
     wallet: authorization.wallet,
     nonceHash: authorization.nonceHash,
-    action: "create_invoice",
-    now: (deps.now?.() ?? new Date()).toISOString()
+    row
   });
-  if (!consumed) throw new MetadataConflictError("Nonce expired or already used.");
-
-  const inserted = await deps.repository.insert(row);
-  if (inserted === "conflict") {
-    const raced = await deps.repository.find(identity);
-    if (!raced || !sameRow(raced, row)) throw new MetadataConflictError();
-    return { invoiceId: id, idempotent: true };
-  }
-
-  return { invoiceId: id, idempotent: false };
+  return { invoiceId: id, idempotent: result === "idempotent" };
 }
 
 export async function getInvoiceMetadata(

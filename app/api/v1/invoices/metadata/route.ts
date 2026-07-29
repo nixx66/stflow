@@ -9,21 +9,26 @@ import {
 } from "@/lib/server/verifyInvoiceCreation";
 import { getServerRuntimeConfig, RuntimeConfigError } from "@/lib/server/runtimeConfig";
 import { WalletAuthError } from "@/lib/server/walletAuth";
+import { readBoundedJson, RequestBodyError } from "@/lib/server/internal/readBoundedJson";
+import {
+  ClientIdentityError,
+  enforceMetadataRateLimit,
+  RateLimitError
+} from "@/lib/server/metadataRateLimit";
+import {
+  RepositoryAuthError,
+  RepositoryConflictError,
+  RepositoryError
+} from "@/lib/server/invoiceMetadataRepository";
 
 const MAX_BODY_BYTES = 96 * 1024;
+class ArcRpcError extends Error {}
 
-async function readBody(request: Request) {
-  const declared = Number(request.headers.get("content-length") ?? 0);
-  if (declared > MAX_BODY_BYTES) throw new MetadataValidationError("Request too large.");
-  const text = await request.text();
-  if (Buffer.byteLength(text, "utf8") > MAX_BODY_BYTES) {
-    throw new MetadataValidationError("Request too large.");
-  }
-  try {
-    return JSON.parse(text) as Parameters<typeof persistSignedInvoiceMetadata>[0];
-  } catch {
-    throw new MetadataValidationError("Invalid JSON.");
-  }
+function walletFromChallenge(challenge: unknown) {
+  if (typeof challenge !== "string") throw new MetadataValidationError("Invalid challenge.");
+  const line = challenge.split("\n").find((part) => part.startsWith("Wallet: "));
+  if (!line) throw new MetadataValidationError("Invalid challenge.");
+  return line.slice(8);
 }
 
 export async function POST(request: Request) {
@@ -33,7 +38,15 @@ export async function POST(request: Request) {
       chain: arcTestnet,
       transport: http(config.rpcUrl)
     });
-    const result = await persistSignedInvoiceMetadata(await readBody(request), {
+    const body = await readBoundedJson(request, MAX_BODY_BYTES) as
+      Parameters<typeof persistSignedInvoiceMetadata>[0];
+    await enforceMetadataRateLimit(
+      request,
+      "persist:create_invoice:v1",
+      walletFromChallenge(body.challenge),
+      10
+    );
+    const result = await persistSignedInvoiceMetadata(body, {
       repository: getInvoiceMetadataRepository(),
       config: {
         chainId: config.chainId,
@@ -41,8 +54,20 @@ export async function POST(request: Request) {
         rpcUrl: config.rpcUrl
       },
       rpc: {
-        getReceipt: ({ hash }) => client.getTransactionReceipt({ hash }),
-        getBlock: ({ blockNumber }) => client.getBlock({ blockNumber })
+        async getReceipt({ hash }) {
+          try {
+            return await client.getTransactionReceipt({ hash });
+          } catch {
+            throw new ArcRpcError();
+          }
+        },
+        async getBlock({ blockNumber }) {
+          try {
+            return await client.getBlock({ blockNumber });
+          } catch {
+            throw new ArcRpcError();
+          }
+        }
       }
     });
     return NextResponse.json(result, { status: result.idempotent ? 200 : 201 });
@@ -50,19 +75,22 @@ export async function POST(request: Request) {
     if (error instanceof RuntimeConfigError) {
       return NextResponse.json({ error: "Service unavailable." }, { status: 503 });
     }
-    if (error instanceof WalletAuthError) {
-      return NextResponse.json({ error: "Wallet authorization failed." }, { status: 401 });
-    }
-    if (error instanceof MetadataConflictError) {
+    if (error instanceof MetadataConflictError || error instanceof RepositoryConflictError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
-    if (error instanceof MetadataValidationError) {
+    if (error instanceof WalletAuthError || error instanceof RepositoryAuthError) {
+      return NextResponse.json({ error: "Wallet authorization failed." }, { status: 401 });
+    }
+    if (error instanceof MetadataValidationError || error instanceof RequestBodyError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
-    if (
-      error instanceof Error &&
-      /receipt|transport|http|rpc|timeout|network/i.test(error.message)
-    ) {
+    if (error instanceof RateLimitError) {
+      return NextResponse.json({ error: error.message }, { status: 429 });
+    }
+    if (error instanceof ClientIdentityError || error instanceof RepositoryError) {
+      return NextResponse.json({ error: "Metadata service unavailable." }, { status: 503 });
+    }
+    if (error instanceof ArcRpcError) {
       return NextResponse.json({ error: "Arc RPC unavailable." }, { status: 502 });
     }
     return NextResponse.json({ error: "Metadata service unavailable." }, { status: 503 });

@@ -4,7 +4,7 @@ import { CheckCircle2, Link2, ShieldCheck } from "lucide-react";
 import { FormEvent, useMemo, useRef, useState } from "react";
 import { getAddress } from "viem";
 import { useAccount } from "wagmi";
-import { useCreateInvoice } from "@/hooks/useCreateInvoice";
+import { useCreateInvoice, type MetadataRecovery } from "@/hooks/useCreateInvoice";
 import { isValidInvoiceWalletAddress } from "@/lib/invoiceCreateReadiness";
 import { createReferenceId } from "@/lib/invoiceCreateTransaction";
 import { buildSharedInvoicePayUrl } from "@/lib/sharedInvoiceLink";
@@ -42,7 +42,7 @@ const initialForm: InvoiceFormValues = {
 };
 
 export function InvoiceForm() {
-  const { createInvoice, configError, state } = useCreateInvoice();
+  const { createInvoice, configError, retryMetadata, state } = useCreateInvoice();
   const { address: connectedMerchantWallet } = useAccount();
   const merchantWalletDisplay = getMerchantWalletDisplay({
     connectedWallet: connectedMerchantWallet,
@@ -52,6 +52,8 @@ export function InvoiceForm() {
   const [metadataPending, setMetadataPending] = useState(false);
   const [creationTxHash, setCreationTxHash] = useState<string>();
   const [formError, setFormError] = useState<string>();
+  const [metadataRecovery, setMetadataRecovery] = useState<MetadataRecovery>();
+  const [retryingMetadata, setRetryingMetadata] = useState(false);
   const [form, setForm] = useState(initialForm);
   const latestRequest = useRef<string | undefined>(undefined);
   const formBusy = useRef(false);
@@ -134,6 +136,7 @@ export function InvoiceForm() {
       setCreatedInvoice(result.invoice);
       setCreationTxHash(result.txHash);
       setMetadataPending(result.metadataPending);
+      setMetadataRecovery(result.metadataRecovery);
     } catch (error) {
       if (latestRequest.current !== requestId) return;
       setFormError(error instanceof Error ? error.message : "Unable to create the invoice.");
@@ -141,6 +144,23 @@ export function InvoiceForm() {
       if (latestRequest.current === requestId) {
         formBusy.current = false;
       }
+    }
+  };
+
+  const retrySave = async () => {
+    if (!metadataRecovery || retryingMetadata) return;
+    setRetryingMetadata(true);
+    setFormError(undefined);
+    try {
+      await retryMetadata(metadataRecovery);
+      setMetadataPending(false);
+    } catch (error) {
+      setMetadataPending(true);
+      setFormError(
+        error instanceof Error ? error.message : "Unable to save invoice metadata."
+      );
+    } finally {
+      setRetryingMetadata(false);
     }
   };
 
@@ -216,7 +236,9 @@ export function InvoiceForm() {
         <InvoiceCreated
           invoice={createdInvoice}
           metadataPending={metadataPending}
+          onRetryMetadata={retrySave}
           paymentLink={paymentLink}
+          retryingMetadata={retryingMetadata}
           txHash={creationTxHash}
         />
       </form>

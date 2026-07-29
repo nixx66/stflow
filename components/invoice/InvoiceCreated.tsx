@@ -24,11 +24,20 @@ const previewItems = [
 type InvoiceCreatedProps = {
   invoice?: Invoice;
   metadataPending?: boolean;
+  onRetryMetadata?: () => void;
   paymentLink: string;
   txHash?: string;
+  retryingMetadata?: boolean;
 };
 
-export function InvoiceCreated({ invoice, metadataPending, paymentLink, txHash }: InvoiceCreatedProps) {
+export function InvoiceCreated({
+  invoice,
+  metadataPending,
+  onRetryMetadata,
+  paymentLink,
+  retryingMetadata,
+  txHash
+}: InvoiceCreatedProps) {
   return (
     <section className="rounded-[2rem] border border-white/75 bg-white/70 p-4 shadow-[0_22px_70px_rgba(4,41,31,0.08)] backdrop-blur-2xl lg:col-span-2">
       <p className="text-xs font-black uppercase tracking-[0.16em] text-[#0fa86b]">After creation</p>
@@ -86,9 +95,17 @@ export function InvoiceCreated({ invoice, metadataPending, paymentLink, txHash }
             </div>
           </div>
           {metadataPending ? (
-            <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
-              The invoice is confirmed onchain. Metadata saving is pending; keep the transaction link for recovery.
-            </p>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+              <p>The invoice is confirmed onchain. Retry saving its display metadata without creating another transaction.</p>
+              <button
+                className="rounded-full bg-amber-900 px-4 py-2 text-xs font-black text-white disabled:opacity-60"
+                disabled={retryingMetadata}
+                onClick={onRetryMetadata}
+                type="button"
+              >
+                {retryingMetadata ? "Retrying…" : "Retry metadata"}
+              </button>
+            </div>
           ) : null}
           <p className="mt-3 text-sm font-bold leading-6 text-[#667085]">
             Send this link to the payer wallet. Merchant wallets can review the invoice, but cannot complete their own checkout.

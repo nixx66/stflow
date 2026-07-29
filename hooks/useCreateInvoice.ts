@@ -44,6 +44,14 @@ export type CreateInvoiceResult = {
   requestId: Hex;
   txHash: Hex;
   metadataPending: boolean;
+  metadataRecovery: MetadataRecovery;
+};
+
+export type MetadataRecovery = {
+  merchant: Address;
+  txHash: Hex;
+  referenceId: Hex;
+  metadata: InvoiceMetadata;
 };
 
 export function getInvoiceCreateConfigError() {
@@ -67,6 +75,7 @@ async function persistMetadata(input: {
   referenceId: Hex;
   metadata: InvoiceMetadata;
 }) {
+  assertWalletSnapshot(input.config, input.merchant, true);
   const nonceResponse = await fetch("/api/v1/auth/nonce", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -86,6 +95,7 @@ async function persistMetadata(input: {
     account: input.merchant,
     message: challenge
   });
+  assertWalletSnapshot(input.config, input.merchant, true);
   const response = await fetch("/api/v1/invoices/metadata", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -123,6 +133,13 @@ export function useCreateInvoice() {
   const [state, dispatch] = useReducer(reduceCreateState, initialState);
   const activeRequest = useRef<Hex | undefined>(undefined);
   const configError = getInvoiceCreateConfigError();
+  const retryMetadata = useCallback(
+    async (recovery: MetadataRecovery) => {
+      if (configError) throw new Error(configError);
+      await persistMetadata({ config, ...recovery });
+    },
+    [config, configError]
+  );
 
   const createInvoice = useCallback(
     async (
@@ -242,12 +259,15 @@ export function useCreateInvoice() {
         } else {
           dispatch({ type: "metadata_saved", requestId });
         }
-        return resolveConfirmedCreation({
+        return {
+          ...resolveConfirmedCreation({
           invoice,
           requestId,
           txHash,
           metadataError
-        });
+          }),
+          metadataRecovery: { merchant, txHash, referenceId, metadata }
+        };
       } catch (error) {
         dispatch({ type: "failed", requestId, error: errorMessage(error) });
         throw error;
@@ -263,6 +283,7 @@ export function useCreateInvoice() {
   return {
     createInvoice,
     configError,
-    state
+    state,
+    retryMetadata
   };
 }

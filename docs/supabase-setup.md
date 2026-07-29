@@ -12,7 +12,8 @@ Supabase project before enabling the server routes.
 1. Create a Supabase project from the Supabase dashboard and choose a strong
    database password. Store the password in a password manager.
 2. Open **SQL Editor** and run
-   `supabase/migrations/202607290001_arc_invoices.sql`.
+   `supabase/migrations/202607290001_arc_invoices.sql`, followed by
+   `supabase/migrations/202607290002_signed_metadata_rpc.sql`.
 3. Alternatively, link the Supabase CLI to the intended project and run:
 
    ```powershell
@@ -44,6 +45,13 @@ whose private metadata was never submitted.
 
 This migration is intentionally one-time rather than idempotent. Apply it once
 to a new database and use a new numbered migration for later schema changes.
+
+The second migration adds service-role-only database functions. Metadata
+insertion and nonce consumption occur in one PostgreSQL transaction, including
+idempotency and immutable-field conflict checks. It also adds a private,
+database-backed rate bucket shared by all server instances. Production requests
+fail closed unless Vercel supplies its trusted forwarding identity. Expired
+rate buckets and wallet nonces are pruned during rate-limit calls.
 
 ## Verify database access
 
