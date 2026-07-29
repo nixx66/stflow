@@ -54,7 +54,7 @@ create table public.invoice_metadata (
   create_block_number bigint not null
     check (create_block_number >= 0),
   create_log_index integer not null
-    check (create_log_index >= 0),
+    check (create_log_index between 0 and 2147483647),
   indexed_status text not null default 'pending'
     check (indexed_status in ('pending', 'paid', 'cancelled')),
   payment_tx_hash text
@@ -62,13 +62,13 @@ create table public.invoice_metadata (
   payment_block_number bigint
     check (payment_block_number is null or payment_block_number >= create_block_number),
   payment_log_index integer
-    check (payment_log_index is null or payment_log_index >= 0),
+    check (payment_log_index is null or payment_log_index between 0 and 2147483647),
   cancellation_tx_hash text
     check (cancellation_tx_hash is null or cancellation_tx_hash ~ '^0x[0-9a-f]{64}$'),
   cancellation_block_number bigint
     check (cancellation_block_number is null or cancellation_block_number >= create_block_number),
   cancellation_log_index integer
-    check (cancellation_log_index is null or cancellation_log_index >= 0),
+    check (cancellation_log_index is null or cancellation_log_index between 0 and 2147483647),
   inserted_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (chain_id, registry_address, invoice_id),
@@ -89,6 +89,13 @@ create table public.invoice_metadata (
       and payment_tx_hash is not null
       and payment_block_number is not null
       and payment_log_index is not null
+      and (
+        payment_block_number > create_block_number
+        or (
+          payment_block_number = create_block_number
+          and payment_log_index > create_log_index
+        )
+      )
       and paid_chain_at is not null
       and cancellation_tx_hash is null
       and cancellation_block_number is null
@@ -99,6 +106,13 @@ create table public.invoice_metadata (
       and cancellation_tx_hash is not null
       and cancellation_block_number is not null
       and cancellation_log_index is not null
+      and (
+        cancellation_block_number > create_block_number
+        or (
+          cancellation_block_number = create_block_number
+          and cancellation_log_index > create_log_index
+        )
+      )
       and cancelled_chain_at is not null
       and payment_tx_hash is null
       and payment_block_number is null
@@ -147,7 +161,7 @@ create table public.processed_chain_events (
   tx_hash text not null
     check (tx_hash ~ '^0x[0-9a-f]{64}$'),
   log_index integer not null
-    check (log_index >= 0),
+    check (log_index between 0 and 2147483647),
   block_number bigint not null
     check (block_number >= 0),
   invoice_id text not null

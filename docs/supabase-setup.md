@@ -104,6 +104,12 @@ service-role key in browser code, Git, screenshots, issue trackers, or chat. If
 a key is exposed, rotate it immediately in Supabase, replace it in every server
 environment, and redeploy.
 
+The current `.env.example` still contains `NEXT_PUBLIC_SUPABASE_URL` and
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` from the legacy client-side path. They do not
+indicate production readiness and must not be populated for this migration.
+The strict runtime configuration task will remove them when the server-only
+client is introduced.
+
 Use separate Supabase projects and keys for local/test and production
 environments. The target production routes must fail closed when either
 variable is missing. That behavior is not complete until the strict runtime
@@ -184,10 +190,39 @@ the associated state transition.
 Use a documented confirmation depth before indexing. Persist the confirmed
 block hash with the cursor and compare it with Arc before processing the next
 range. Derive event times from the corresponding Arc block timestamp, not
-server wall-clock time. A mismatched block hash must stop cursor advancement,
-rewind to the last known canonical block, and replay the affected range.
-Provide an operator-controlled backfill path for new deployments and recovery;
-it must use the same ordered, idempotent transaction logic.
+server wall-clock time. A mismatched block hash must stop automatic indexing;
+the current schema does not contain enough block history to choose a safe
+rewind point automatically.
+
+Recovery is an explicit, bounded operator action for one chain and registry.
+Keep public metadata routes and scheduled sync disabled until it finishes:
+
+1. Choose `rewind_block` at or before the suspected fork and no earlier than
+   the registry deployment block. Fetch the canonical confirmed logs through
+   the recovery head, then record the current cursor and affected invoice IDs
+   before changing data.
+2. In one database transaction, lock the deployment cursor with `FOR UPDATE`,
+   delete `processed_chain_events` at or after `rewind_block`, reset any
+   payment or cancellation at or after the rewind point to `pending`, delete a
+   row whose create is at or after the rewind point when no canonical
+   replacement create exists, and reset the cursor to `rewind_block - 1` with
+   that canonical block's hash.
+3. Fetch canonical logs from `rewind_block` through the confirmed head in
+   bounded ranges. For every affected invoice, rebuild create, payment, and
+   cancellation provenance in block/log order. A canonical create keeps its
+   private metadata only when the recomputed hash still matches. If its create
+   is orphaned and no canonical replacement exists, delete the
+   `invoice_metadata` row; a later re-mined create requires metadata
+   resubmission. If only a pay or cancel is orphaned, clear that transition,
+   restore `pending`, and apply any canonical replacement transition.
+4. Commit each bounded range using the normal atomic event-mutation-cursor
+   transaction. Stop and alert on a metadata mismatch or another block-hash
+   mismatch; never advance the cursor past an unresolved range.
+
+An initial backfill starts at the verified registry deployment block and uses
+the same ordered, idempotent projection. The event table deliberately has no
+metadata foreign key, so canonical creates without submitted private metadata
+can still be indexed.
 
 `indexed_status = 'pending'` mirrors the contract enum. Expiry is a read-time
 state derived from a pending invoice whose `due_chain_at` is at or before the
