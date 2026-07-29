@@ -7,16 +7,18 @@ import {
   ARC_CHAIN_ID,
   ARC_USDC,
   buildDeploymentRequest,
-  buildStandardJsonInput,
   materializeRuntimeBytecode,
+  parseCliArgs,
   saveDeploymentRecord,
   validateDeployment,
+  validateManifest,
 } from "../scripts/arcDeployment.mjs";
 
 const registry = "0x1111111111111111111111111111111111111111";
 const deployer = "0x2222222222222222222222222222222222222222";
 const tx = `0x${"33".repeat(32)}`;
 const blockHash = `0x${"44".repeat(32)}`;
+const sourcePath = "contracts/src/STFlowInvoiceRegistry.sol";
 
 const artifact = {
   abi: [
@@ -31,21 +33,39 @@ const artifact = {
     object: `0x6000${"00".repeat(32)}6000`,
     immutableReferences: { "60": [{ start: 2, length: 32 }] },
   },
-  metadata: {
-    compiler: { version: "0.8.30+commit.73712a01" },
-    settings: {
-      optimizer: { enabled: true, runs: 200 },
-      compilationTarget: {
-        "contracts/src/STFlowInvoiceRegistry.sol": "STFlowInvoiceRegistry",
-      },
-    },
+  metadata: { compiler: { version: "0.8.30+commit.73712a01" } },
+};
+const settings = {
+  optimizer: { enabled: true, runs: 200 },
+  evmVersion: "osaka",
+  metadata: { bytecodeHash: "ipfs", appendCBOR: true },
+  viaIR: false,
+  remappings: ["@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"],
+  libraries: {},
+};
+const buildInfo = {
+  id: "build-id",
+  solcVersion: "0.8.30",
+  input: {
+    language: "Solidity",
+    sources: { [sourcePath]: { content: "contract Registry {}\n" } },
+    settings,
   },
 };
+const request = buildDeploymentRequest({
+  artifact,
+  buildInfo,
+  artifactJson: JSON.stringify(artifact),
+  buildInfoJson: JSON.stringify(buildInfo),
+  standardJson: JSON.stringify(buildInfo.input),
+  commit: "a".repeat(40),
+  sourceHashes: { [sourcePath]: { sha256: "source", keccak256: "0xsource" } },
+});
 
 function rpcFixture(overrides: Record<string, unknown> = {}) {
   const runtime = materializeRuntimeBytecode(
-    artifact.deployedBytecode.object,
-    artifact.deployedBytecode.immutableReferences,
+    request.bytecode.runtimeTemplate,
+    request.bytecode.immutableReferences,
     ARC_USDC,
   );
   const values: Record<string, unknown> = {
@@ -62,13 +82,15 @@ function rpcFixture(overrides: Record<string, unknown> = {}) {
       hash: tx,
       from: deployer,
       blockNumber: "0x2a",
+      blockHash,
+      to: null,
+      input: request.bytecode.creationData,
     },
     eth_getCode: runtime,
     usdc: `0x${"0".repeat(24)}${ARC_USDC.slice(2)}`,
     decimals: `0x${"0".repeat(63)}6`,
     ...overrides,
   };
-
   return async (method: string, params: unknown[]) => {
     if (method === "eth_call") {
       const data = (params[0] as { data: string }).data;
@@ -78,232 +100,144 @@ function rpcFixture(overrides: Record<string, unknown> = {}) {
   };
 }
 
-test("deployment request encodes the fixed USDC constructor and checksums", () => {
-  const request = buildDeploymentRequest({
-    artifact,
-    buildInfo: {
-      id: "build-1",
-      source_id_to_path: {
-        "0": "contracts/src/STFlowInvoiceRegistry.sol",
-      },
-      language: "Solidity",
-    },
-    commit: "a".repeat(40),
+async function verify(overrides: Record<string, unknown> = {}) {
+  return validateDeployment({
+    address: registry,
+    tx,
+    request,
+    rpc: rpcFixture(overrides),
   });
+}
 
-  assert.equal(request.chainId, ARC_CHAIN_ID);
-  assert.equal(request.constructor.usdc, ARC_USDC);
-  assert.match(request.creationData, /^0x60006000[0-9a-f]{64}$/);
-  assert.match(request.checksums.creationDataKeccak, /^0x[0-9a-f]{64}$/);
-  assert.match(request.checksums.runtimeArtifactKeccak, /^0x[0-9a-f]{64}$/);
-  assert.equal(request.source.commit, "a".repeat(40));
-  assert.equal(request.compiler.version, "0.8.30+commit.73712a01");
-  assert.deepEqual(request.compiler.optimizer, { enabled: true, runs: 200 });
+test("request seals full release provenance and rejects mutation", () => {
+  assert.equal(request.schemaVersion, 1);
+  assert.equal(request.source.sourceCommit, "a".repeat(40));
+  assert.equal(request.compiler.settings.evmVersion, "osaka");
+  assert.equal(request.compiler.settings.metadata.appendCBOR, true);
+  assert.equal(request.bytecode.creationDataBytes, (request.bytecode.creationData.length - 2) / 2);
+  assert.match(request.hashes.artifactSha256, /^[0-9a-f]{64}$/);
+  assert.doesNotThrow(() => validateManifest(request));
+
+  const changed = structuredClone(request);
+  changed.constructor.usdc = deployer;
+  assert.throws(() => validateManifest(changed), /checksum/i);
 });
 
-test("immutable runtime matching replaces every reference with USDC", () => {
-  const runtime = materializeRuntimeBytecode(
-    artifact.deployedBytecode.object,
-    artifact.deployedBytecode.immutableReferences,
-    ARC_USDC,
+test("CLI parser rejects unknown, duplicate, missing, and valueless flags", () => {
+  const definitions = {
+    "--address": { name: "address", flag: "--address", required: true },
+    "--write": { name: "write", flag: "--write", boolean: true },
+  };
+  assert.deepEqual(parseCliArgs(["--address", registry], definitions), { address: registry });
+  assert.throws(() => parseCliArgs(["--wat"], definitions), /unknown/i);
+  assert.throws(
+    () => parseCliArgs(["--address", registry, "--address", registry], definitions),
+    /duplicate/i,
   );
-
-  assert.equal(runtime, `0x6000${"0".repeat(24)}${ARC_USDC.slice(2)}6000`);
+  assert.throws(() => parseCliArgs([], definitions), /required/i);
+  assert.throws(() => parseCliArgs(["--address", "--write"], definitions), /requires a value/i);
 });
 
-test("standard JSON input is built from artifact metadata and checked-in sources", async () => {
-  const input = await buildStandardJsonInput({
-    artifact: {
-      ...artifact,
-      metadata: {
-        ...artifact.metadata,
-        language: "Solidity",
-        sources: {
-          "contracts/src/STFlowInvoiceRegistry.sol": {
-            keccak256: "0xsource",
-            license: "MIT",
-          },
-        },
-        settings: {
-          ...artifact.metadata.settings,
-          remappings: ["@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"],
-        },
-      },
-    },
-    readSource: async (path: string) => `source:${path}`,
-  });
-
-  assert.equal(input.language, "Solidity");
+test("immutable matching injects the fixed USDC into every reference", () => {
   assert.equal(
-    input.sources["contracts/src/STFlowInvoiceRegistry.sol"].content,
-    "source:contracts/src/STFlowInvoiceRegistry.sol",
-  );
-  assert.deepEqual(input.settings.optimizer, { enabled: true, runs: 200 });
-  assert.deepEqual(input.settings.outputSelection, {
-    "*": { "*": ["abi", "evm.bytecode", "evm.deployedBytecode", "metadata"] },
-  });
-});
-
-test("verification rejects a wrong chain", async () => {
-  await assert.rejects(
-    validateDeployment({
-      address: registry,
-      tx,
-      artifact,
-      commit: "a".repeat(40),
-      rpc: rpcFixture({ eth_chainId: "0x1" }),
-    }),
-    /wrong chain/i,
+    materializeRuntimeBytecode(
+      artifact.deployedBytecode.object,
+      artifact.deployedBytecode.immutableReferences,
+      ARC_USDC,
+    ),
+    `0x6000${"0".repeat(24)}${ARC_USDC.slice(2)}6000`,
   );
 });
 
-test("verification rejects placeholder address and transaction values", async () => {
+test("verification rejects wrong chain, placeholder, failed receipt, and address drift", async () => {
+  await assert.rejects(verify({ eth_chainId: "0x1" }), /wrong chain/i);
   await assert.rejects(
     validateDeployment({
       address: "0x0000000000000000000000000000000000000000",
       tx,
-      artifact,
-      commit: "a".repeat(40),
+      request,
       rpc: rpcFixture(),
     }),
     /placeholder/i,
   );
+  await assert.rejects(verify({ eth_getTransactionReceipt: null }), /receipt/i);
   await assert.rejects(
-    validateDeployment({
-      address: registry,
-      tx: `0x${"00".repeat(32)}`,
-      artifact,
-      commit: "a".repeat(40),
-      rpc: rpcFixture(),
-    }),
-    /placeholder/i,
-  );
-});
-
-test("verification rejects failed and missing receipts", async () => {
-  for (const receipt of [null, { status: "0x0" }]) {
-    await assert.rejects(
-      validateDeployment({
-        address: registry,
-        tx,
-        artifact,
-        commit: "a".repeat(40),
-        rpc: rpcFixture({ eth_getTransactionReceipt: receipt }),
-      }),
-      /receipt/i,
-    );
-  }
-});
-
-test("verification rejects a mismatched deployment address", async () => {
-  await assert.rejects(
-    validateDeployment({
-      address: registry,
-      tx,
-      artifact,
-      commit: "a".repeat(40),
-      rpc: rpcFixture({
-        eth_getTransactionReceipt: {
-          status: "0x1",
-          transactionHash: tx,
-          contractAddress: deployer,
-          blockNumber: "0x2a",
-          blockHash,
-          from: deployer,
-        },
-      }),
+    verify({
+      eth_getTransactionReceipt: {
+        status: "0x1",
+        transactionHash: tx,
+        contractAddress: deployer,
+        blockNumber: "0x2a",
+        blockHash,
+        from: deployer,
+      },
     }),
     /address/i,
   );
 });
 
-test("verification rejects receipt evidence for another transaction", async () => {
+test("verification requires an exact contract-creation transaction", async () => {
+  const base = {
+    hash: tx,
+    from: deployer,
+    blockNumber: "0x2a",
+    blockHash,
+    to: null,
+    input: request.bytecode.creationData,
+  };
   await assert.rejects(
-    validateDeployment({
-      address: registry,
-      tx,
-      artifact,
-      commit: "a".repeat(40),
-      rpc: rpcFixture({
-        eth_getTransactionReceipt: {
-          status: "0x1",
-          transactionHash: `0x${"55".repeat(32)}`,
-          contractAddress: registry,
-          blockNumber: "0x2a",
-          blockHash,
-          from: deployer,
-        },
-      }),
-    }),
-    /transaction/i,
+    verify({ eth_getTransactionByHash: { ...base, to: registry } }),
+    /create a contract/i,
+  );
+  await assert.rejects(
+    verify({ eth_getTransactionByHash: { ...base, input: "0x6000" } }),
+    /input/i,
+  );
+  await assert.rejects(
+    verify({ eth_getTransactionByHash: { ...base, blockHash: `0x${"55".repeat(32)}` } }),
+    /block evidence/i,
+  );
+  await assert.rejects(
+    verify({ eth_getTransactionByHash: { ...base, from: registry } }),
+    /deployers differ/i,
   );
 });
 
-test("verification rejects empty or foreign runtime bytecode", async () => {
-  for (const code of ["0x", "0x6001"]) {
-    await assert.rejects(
-      validateDeployment({
-        address: registry,
-        tx,
-        artifact,
-        commit: "a".repeat(40),
-        rpc: rpcFixture({ eth_getCode: code }),
-      }),
-      /bytecode/i,
-    );
-  }
-});
-
-test("verification rejects the wrong immutable USDC and decimals", async () => {
+test("verification rejects bytecode, immutable USDC, and malformed decimals", async () => {
+  await assert.rejects(verify({ eth_getCode: "0x" }), /bytecode/i);
+  await assert.rejects(verify({ eth_getCode: "0x6001" }), /bytecode/i);
   await assert.rejects(
-    validateDeployment({
-      address: registry,
-      tx,
-      artifact,
-      commit: "a".repeat(40),
-      rpc: rpcFixture({ usdc: `0x${"0".repeat(24)}${deployer.slice(2)}` }),
-    }),
+    verify({ usdc: `0x${"0".repeat(24)}${deployer.slice(2)}` }),
     /usdc/i,
   );
-  await assert.rejects(
-    validateDeployment({
-      address: registry,
-      tx,
-      artifact,
-      commit: "a".repeat(40),
-      rpc: rpcFixture({ decimals: `0x${"0".repeat(63)}5` }),
-    }),
-    /decimals/i,
-  );
+  await assert.rejects(verify({ decimals: "0x06" }), /malformed/i);
+  await assert.rejects(verify({ decimals: `0x${"0".repeat(63)}5` }), /decimals/i);
 });
 
-test("valid verification returns evidence without writing by default", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "arc-deployment-"));
-  const output = join(dir, "arc-testnet.json");
-  const record = await validateDeployment({
-    address: registry,
-    tx,
-    artifact,
-    commit: "a".repeat(40),
-    rpc: rpcFixture(),
-  });
+test("valid evidence record is tied to the request source rather than current HEAD", async () => {
+  const record = await verify();
 
   assert.equal(record.address, registry);
   assert.equal(record.transactionHash, tx);
   assert.equal(record.block.number, 42);
+  assert.equal(record.block.hash, blockHash);
   assert.equal(record.deployer, deployer);
-  assert.equal(record.constructor.usdc, ARC_USDC);
+  assert.equal(record.source.commit, "a".repeat(40));
+  assert.equal(record.source.standardJsonSha256, request.hashes.standardJsonSha256);
+  assert.equal(record.codeHashes.creationData, request.hashes.creationDataKeccak);
+  assert.equal(record.request.checksum.value, request.manifestChecksum.value);
   assert.equal(record.verification.sourceCode, false);
-  await assert.rejects(readFile(output), /ENOENT/);
+  assert.match(record.validatedAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
-test("validated record is only written when explicitly enabled", async () => {
+test("validated record writes only with explicit approval and never overwrites", async () => {
   const dir = await mkdtemp(join(tmpdir(), "arc-deployment-write-"));
   const output = join(dir, "arc-testnet.json");
-  const record = { address: registry };
+  const record = await verify();
 
   assert.equal(await saveDeploymentRecord({ record, output, write: false }), false);
   await assert.rejects(readFile(output), /ENOENT/);
   assert.equal(await saveDeploymentRecord({ record, output, write: true }), true);
   assert.deepEqual(JSON.parse(await readFile(output, "utf8")), record);
+  await assert.rejects(saveDeploymentRecord({ record, output, write: true }), /EEXIST/);
 });

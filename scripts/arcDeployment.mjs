@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { keccak256, encodeDeployData, getAddress, toFunctionSelector } from "viem";
@@ -8,6 +9,68 @@ export const ARC_EXPLORER_URL = "https://testnet.arcscan.app";
 export const ARC_USDC = "0x3600000000000000000000000000000000000000";
 
 const hexPattern = /^0x[0-9a-fA-F]*$/;
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonical(value[key])]),
+    );
+  }
+  return value;
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export function sealManifest(payload) {
+  const manifest = canonical(payload);
+  return {
+    ...manifest,
+    manifestChecksum: {
+      algorithm: "sha256",
+      value: sha256(JSON.stringify(manifest)),
+    },
+  };
+}
+
+export function validateManifest(manifest) {
+  if (manifest?.schemaVersion !== 1) throw new Error("unsupported deployment request version");
+  const { manifestChecksum, ...payload } = manifest;
+  if (
+    manifestChecksum?.algorithm !== "sha256" ||
+    manifestChecksum.value !== sha256(JSON.stringify(canonical(payload)))
+  ) {
+    throw new Error("deployment request checksum is invalid");
+  }
+  return canonical(payload);
+}
+
+export function parseCliArgs(argv, definitions) {
+  const output = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index];
+    const definition = definitions[flag];
+    if (!definition) throw new Error(`unknown argument: ${flag}`);
+    if (Object.hasOwn(output, definition.name)) throw new Error(`duplicate argument: ${flag}`);
+    if (definition.boolean) {
+      output[definition.name] = true;
+      continue;
+    }
+    const value = argv[++index];
+    if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
+    output[definition.name] = value;
+  }
+  for (const definition of Object.values(definitions)) {
+    if (definition.required && !Object.hasOwn(output, definition.name)) {
+      throw new Error(`${definition.flag} is required`);
+    }
+  }
+  return output;
+}
 
 function requireHex(value, label) {
   if (typeof value !== "string" || !hexPattern.test(value)) {
@@ -44,17 +107,23 @@ export function materializeRuntimeBytecode(bytecode, references, immutableAddres
   return `0x${output}`;
 }
 
-export function buildDeploymentRequest({ artifact, buildInfo, commit }) {
+export function buildDeploymentRequest({
+  artifact,
+  buildInfo,
+  artifactJson,
+  buildInfoJson,
+  standardJson,
+  commit,
+  sourceHashes,
+}) {
   constructorAbi(artifact);
   const bytecode = requireHex(artifact.bytecode?.object, "creation bytecode");
   const runtime = requireHex(artifact.deployedBytecode?.object, "runtime bytecode");
   if (bytecode === "0x" || runtime === "0x") throw new Error("contract bytecode is empty");
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error("source commit must be a full SHA");
   if (
-    buildInfo?.language !== "Solidity" ||
-    !Object.values(buildInfo.source_id_to_path ?? {}).includes(
-      "contracts/src/STFlowInvoiceRegistry.sol",
-    )
+    buildInfo?.input?.language !== "Solidity" ||
+    !buildInfo.input.sources?.["contracts/src/STFlowInvoiceRegistry.sol"]
   ) {
     throw new Error("build info does not contain the registry source");
   }
@@ -64,17 +133,26 @@ export function buildDeploymentRequest({ artifact, buildInfo, commit }) {
     bytecode,
     args: [ARC_USDC],
   });
-  const metadata = artifact.metadata;
+  const settings = buildInfo.input.settings;
+  const compilerVersion = artifact.metadata?.compiler?.version;
 
   if (
-    metadata?.compiler?.version !== "0.8.30+commit.73712a01" ||
-    metadata?.settings?.optimizer?.enabled !== true ||
-    metadata?.settings?.optimizer?.runs !== 200
+    buildInfo.solcVersion !== "0.8.30" ||
+    compilerVersion !== "0.8.30+commit.73712a01" ||
+    settings?.optimizer?.enabled !== true ||
+    settings?.optimizer?.runs !== 200 ||
+    typeof settings.evmVersion !== "string" ||
+    settings.metadata?.bytecodeHash !== "ipfs" ||
+    settings.metadata?.appendCBOR !== true ||
+    settings.viaIR !== false ||
+    !Array.isArray(settings.remappings) ||
+    typeof settings.libraries !== "object"
   ) {
     throw new Error("artifact compiler settings do not match the release profile");
   }
 
-  return {
+  return sealManifest({
+    schemaVersion: 1,
     status: "NOT_DEPLOYED",
     chainId: ARC_CHAIN_ID,
     rpcUrl: ARC_RPC_URL,
@@ -82,52 +160,45 @@ export function buildDeploymentRequest({ artifact, buildInfo, commit }) {
     contract: "STFlowInvoiceRegistry",
     constructor: { usdc: ARC_USDC },
     creationData,
-    compiler: {
-      version: metadata.compiler.version,
-      optimizer: metadata.settings.optimizer,
-    },
+    compiler: { version: compilerVersion, settings },
     source: {
-      commit,
-      target: metadata.settings.compilationTarget,
+      sourceCommit: commit,
+      target: "contracts/src/STFlowInvoiceRegistry.sol:STFlowInvoiceRegistry",
       buildInfoId: buildInfo.id,
+      files: sourceHashes,
     },
-    checksums: {
+    bytecode: {
+      init: bytecode,
+      runtimeTemplate: runtime,
+      immutableReferences: artifact.deployedBytecode.immutableReferences ?? {},
+      creationData,
+      creationDataBytes: (creationData.length - 2) / 2,
+    },
+    hashes: {
       creationDataKeccak: keccak256(creationData),
       runtimeArtifactKeccak: keccak256(runtime),
+      artifactSha256: sha256(artifactJson),
+      buildInfoSha256: sha256(buildInfoJson),
+      standardJsonSha256: sha256(standardJson),
     },
-  };
+    sourceVerification: {
+      format: "Solidity standard JSON input",
+      file: ".stflow-deployment/standard-input.json",
+    },
+  });
 }
 
-export async function buildStandardJsonInput({ artifact, readSource }) {
-  const metadata = artifact.metadata;
+export async function buildStandardJsonInput({ buildInfo, readSource }) {
   const sources = {};
 
-  for (const path of Object.keys(metadata.sources ?? {}).sort()) {
+  for (const path of Object.keys(buildInfo.input.sources ?? {}).sort()) {
     sources[path] = { content: await readSource(path) };
   }
 
-  const {
-    compilationTarget: _target,
-    libraries,
-    metadata: metadataSettings,
-    optimizer,
-    remappings,
-    evmVersion,
-  } = metadata.settings;
-
   return {
-    language: metadata.language,
+    language: buildInfo.input.language,
     sources,
-    settings: {
-      optimizer,
-      ...(evmVersion ? { evmVersion } : {}),
-      ...(remappings ? { remappings } : {}),
-      ...(libraries ? { libraries } : {}),
-      ...(metadataSettings ? { metadata: metadataSettings } : {}),
-      outputSelection: {
-        "*": { "*": ["abi", "evm.bytecode", "evm.deployedBytecode", "metadata"] },
-      },
-    },
+    settings: buildInfo.input.settings,
   };
 }
 
@@ -154,11 +225,12 @@ function decodeAddress(value, label) {
 
 function decodeUint(value, label) {
   const hex = requireHex(value, label);
-  if (hex === "0x") throw new Error(`${label} returned no data`);
+  if (hex.length !== 66) throw new Error(`${label} returned malformed data`);
   return BigInt(hex);
 }
 
-export async function validateDeployment({ address, tx, artifact, commit, rpc }) {
+export async function validateDeployment({ address, tx, request, rpc }) {
+  const release = validateManifest(request);
   const registry = expectAddress(address, "deployment address");
   if (/^0x0{40}$/i.test(registry)) throw new Error("deployment address is a placeholder");
   if (!/^0x[0-9a-fA-F]{64}$/.test(tx)) throw new Error("transaction hash is invalid");
@@ -180,15 +252,32 @@ export async function validateDeployment({ address, tx, artifact, commit, rpc })
   }
 
   const transaction = await rpc("eth_getTransactionByHash", [tx]);
-  if (!transaction || transaction.blockNumber == null) {
+  if (!transaction || transaction.blockNumber == null || !transaction.blockHash) {
     throw new Error("deployment transaction is missing or unconfirmed");
+  }
+  if (transaction.hash?.toLowerCase() !== tx.toLowerCase()) {
+    throw new Error("deployment transaction hash is inconsistent");
+  }
+  if (transaction.to !== null) throw new Error("deployment transaction must create a contract");
+  if (requireHex(transaction.input, "deployment input") !== release.bytecode.creationData) {
+    throw new Error("deployment input does not match the signed request");
+  }
+  const deployer = expectAddress(transaction.from, "deployer");
+  if (receipt.from && expectAddress(receipt.from, "receipt deployer") !== deployer) {
+    throw new Error("transaction and receipt deployers differ");
+  }
+  if (
+    transaction.blockNumber !== receipt.blockNumber ||
+    transaction.blockHash.toLowerCase() !== receipt.blockHash?.toLowerCase()
+  ) {
+    throw new Error("transaction and receipt block evidence differ");
   }
 
   const runtime = requireHex(await rpc("eth_getCode", [registry, "latest"]), "deployed bytecode");
   if (runtime === "0x") throw new Error("deployed bytecode is empty");
   const expectedRuntime = materializeRuntimeBytecode(
-    artifact.deployedBytecode.object,
-    artifact.deployedBytecode.immutableReferences,
+    release.bytecode.runtimeTemplate,
+    release.bytecode.immutableReferences,
     ARC_USDC,
   );
   if (runtime !== expectedRuntime.toLowerCase()) {
@@ -209,33 +298,36 @@ export async function validateDeployment({ address, tx, artifact, commit, rpc })
   );
   if (decimals !== 6n) throw new Error(`USDC decimals must be 6, received ${decimals}`);
 
-  const request = buildDeploymentRequest({
-    artifact,
-    buildInfo: {
-      id: "validated-from-artifact",
-      language: "Solidity",
-      source_id_to_path: { "0": "contracts/src/STFlowInvoiceRegistry.sol" },
-    },
-    commit,
-  });
-
   return {
+    schemaVersion: 1,
     network: "arc-testnet",
     chainId: ARC_CHAIN_ID,
+    rpcUrl: ARC_RPC_URL,
+    explorerUrl: ARC_EXPLORER_URL,
     address: registry,
     transactionHash: tx.toLowerCase(),
     block: {
       number: Number.parseInt(receipt.blockNumber, 16),
       hash: receipt.blockHash,
     },
-    deployer: expectAddress(receipt.from ?? transaction.from, "deployer"),
+    deployer,
     constructor: { usdc: getAddress(ARC_USDC) },
-    compiler: request.compiler,
-    source: { commit },
+    compiler: release.compiler,
+    source: {
+      commit: release.source.sourceCommit,
+      target: release.source.target,
+      standardJsonSha256: release.hashes.standardJsonSha256,
+    },
     codeHashes: {
       deployed: keccak256(runtime),
-      artifactTemplate: request.checksums.runtimeArtifactKeccak,
+      artifactTemplate: release.hashes.runtimeArtifactKeccak,
+      creationData: release.hashes.creationDataKeccak,
     },
+    request: {
+      checksum: request.manifestChecksum,
+      creationDataBytes: release.bytecode.creationDataBytes,
+    },
+    validatedAt: new Date().toISOString(),
     verification: {
       bytecode: true,
       constructor: true,

@@ -1,175 +1,180 @@
 # Arc Testnet registry deployment
 
-> **Status: NOT DEPLOYED.** This repository does not contain a confirmed Arc Testnet
-> registry address or deployment transaction yet.
+> **Status: NOT DEPLOYED.** No Arc Testnet address or deployment transaction is
+> recorded in this repository.
 
-This checklist deploys `STFlowInvoiceRegistry` without exporting a wallet secret.
-The contract has no owner, administrator, upgrade, pause, or recovery function. The
-deployer receives no special authority after deployment.
+The release scripts never accept a private key, seed phrase, keystore, wallet
+password, or signing environment variable. MetaMask is the only signing boundary.
+`STFlowInvoiceRegistry` has no owner, administrator, upgrade, pause, fee, or recovery
+authority.
 
-## Locked release inputs
+## Locked network and constructor
 
-| Item | Required value |
+| Item | Value |
 | --- | --- |
-| Network | Arc Testnet |
-| Chain ID | `5042002` |
+| Chain | Arc Testnet (`5042002`) |
 | RPC | `https://rpc.testnet.arc.network` |
 | Explorer | `https://testnet.arcscan.app` |
 | Contract | `contracts/src/STFlowInvoiceRegistry.sol:STFlowInvoiceRegistry` |
 | Constructor | `address usdcAddress` |
-| Constructor value | `0x3600000000000000000000000000000000000000` |
-| Solidity | `0.8.30` |
+| USDC | `0x3600000000000000000000000000000000000000` |
+| Compiler | `0.8.30+commit.73712a01` |
 | Optimizer | enabled, 200 runs |
 
-Arc Testnet uses USDC for native gas. The deploying wallet must have enough testnet
-USDC for gas before opening the confirmation. Keep invoice settlement funds separate
-from the deployment wallet when possible.
+Arc Testnet charges native gas in USDC. Keep enough testnet USDC for the contract
+creation and leave settlement funds in separate wallets when possible.
 
-## 1. Freeze and prepare
+## 1. Prepare from a clean Git commit
 
-1. Confirm `git status --short` has no tracked changes.
-2. Run the full release checks listed under **Release checks**.
-3. Record the full source commit:
+The repository must be completely clean, including untracked files. Scratch
+directories such as `.superpowers/` intentionally block release preparation. Remove
+or relocate them only after confirming they contain no work that must be preserved.
 
-   ```powershell
-   git rev-parse HEAD
-   ```
-
-4. Generate the non-secret request:
-
-   ```powershell
-   npm run arc:deploy:prepare
-   ```
-
-The command reads the current Foundry artifact and build information, validates the
-constructor and compiler profile, and creates ignored files under
-`.stflow-deployment/`. It does not connect to a wallet or broadcast a transaction.
-Preserve these evidence values:
-
-- source commit;
-- creation-data Keccak-256;
-- runtime-artifact Keccak-256;
-- standard JSON SHA-256.
-
-**Human checkpoint A:** Stop if the request says anything other than
-`"status": "NOT_DEPLOYED"`, chain `5042002`, or the locked USDC address.
-
-## 2. Confirm with MetaMask
-
-Use a fresh browser session and open Remix from its official bookmarked URL. Import
-the repository at the recorded commit. Do not paste a seed phrase, private key,
-keystore, or wallet password into Remix, a terminal, environment variable, chat, or
-website.
-
-1. Compile `STFlowInvoiceRegistry` with Solidity `0.8.30`, optimizer enabled, 200
-   runs. Do not change EVM/compiler settings.
-2. In **Deploy & Run Transactions**, select **Injected Provider - MetaMask**.
-3. MetaMask must display Arc Testnet with chain ID `5042002`.
-4. Select `STFlowInvoiceRegistry`.
-5. Enter the single constructor argument:
-   `0x3600000000000000000000000000000000000000`.
-6. Compare Remix's compiled creation bytecode plus constructor argument with
-   `.stflow-deployment/arc-testnet-request.json` → `creationData`. Stop on any
-   difference.
-7. Click deploy once. Review the account, Arc Testnet network, contract-creation
-   action, and USDC gas estimate in MetaMask.
-
-**Human checkpoint B:** Reject the MetaMask request if it switches network, requests
-an approval/transfer instead of contract creation, has an unexpected recipient, or
-the gas cost is not acceptable. MetaMask is the only place where authorization is
-confirmed.
-
-After confirmation, copy the transaction hash and deployed address from the Arc
-Testnet explorer. Do not rely on a Remix notification alone.
-
-## 3. Validate before recording
-
-Run read-only validation first:
+Set `FORGE_BIN` only when `forge` is not on `PATH`; it must point to the trusted
+Foundry executable, not a wrapper:
 
 ```powershell
-npm run arc:deploy:verify -- --address 0xDEPLOYED_ADDRESS --tx 0xTRANSACTION_HASH
+$env:FORGE_BIN = "C:\trusted\foundry\bin\forge.exe"
+npm run arc:deploy:prepare
 ```
 
-The verifier fails closed unless all of the following are true:
+Preparation performs two independent builds from `git archive HEAD` in temporary
+directories. It never compiles worktree bytes. It verifies:
 
-- RPC reports chain ID `5042002`;
-- the successful receipt creates the supplied address;
-- the transaction is confirmed;
-- deployed runtime bytecode exactly matches the Foundry artifact after inserting
-  the immutable USDC address;
-- `registry.usdc()` is the locked Arc Testnet USDC address;
-- that token reports 6 decimals.
+- every compiler input source is tracked at the recorded commit;
+- compiler input bytes match the corresponding Git blob;
+- Solidity metadata source Keccak hashes match those bytes;
+- artifact init/runtime bytecode matches full build-info output;
+- both clean compiler replays produce identical standard JSON and bytecode;
+- compiler is exactly `0.8.30`, optimizer is enabled with 200 runs, and the complete
+  EVM version, metadata, `viaIR`, remapping, and library settings are recorded.
 
-The read-only command prints a candidate record and does not create
-`contracts/deployment/arc-testnet.json`.
+The ignored `.stflow-deployment/` directory receives:
 
-**Human checkpoint C:** Compare the printed address, transaction, block, deployer,
-commit, constructor, and code hashes with MetaMask, Arcscan, and the prepared
-request. Only then write the record:
+- `arc-testnet-request.json`: versioned, self-checksummed deployment manifest;
+- `standard-input.json`: exact standard JSON compiler input from committed blobs.
+
+The manifest contains the source commit, complete settings, constructor, init and
+runtime bytecode, immutable references, exact creation data and byte length, plus
+artifact/build-info/standard-JSON/source hashes. It has no timestamp, so identical
+inputs produce identical request bytes.
+
+**Checkpoint A:** Confirm the command reports `NOT_DEPLOYED`, chain `5042002`, the
+fixed USDC address, the expected source commit, creation-data hash and byte length,
+and a valid manifest checksum.
+
+## 2. Submit the exact prepared creation data with MetaMask
+
+Do not recompile or use Remix's **Deploy** button. Deployment must submit the exact
+`creationData` already verified in `arc-testnet-request.json`.
+
+Open the official Remix site from a trusted bookmark. In **Deploy & Run
+Transactions**, select **Injected Provider - MetaMask**, then verify MetaMask shows
+Arc Testnet. Open the Remix terminal and paste the following snippet after replacing
+the three manifest placeholders. The `data` value is public bytecode, not a secret.
+
+```javascript
+const data = "PASTE_manifest_bytecode_creationData";
+const expectedHash = "PASTE_manifest_hashes_creationDataKeccak";
+const expectedBytes = PASTE_manifest_bytecode_creationDataBytes;
+
+if ((await web3.eth.getChainId()) !== 5042002) throw new Error("Wrong chain");
+if ((data.length - 2) / 2 !== expectedBytes) throw new Error("Wrong byte length");
+if (web3.utils.keccak256(data) !== expectedHash) throw new Error("Wrong creation-data hash");
+
+const [from] = await web3.eth.getAccounts();
+if (!from) throw new Error("MetaMask account unavailable");
+await web3.eth.sendTransaction({ from, data });
+```
+
+The script has no `to` address, so MetaMask must describe a contract-creation
+transaction.
+
+**Checkpoint B:** In MetaMask, verify the selected account, Arc Testnet chain
+`5042002`, contract creation, no recipient, and acceptable USDC gas. Reject anything
+that requests token approval/transfer, changes network, adds a recipient, or differs
+from those facts. Never paste a seed phrase or private key into Remix, DevTools,
+terminal, chat, a file, or an environment variable.
+
+Copy the confirmed transaction hash and created address from Arcscan.
+
+## 3. Rebuild and validate chain evidence
+
+First run without `--write`:
 
 ```powershell
-npm run arc:deploy:verify -- --address 0xDEPLOYED_ADDRESS --tx 0xTRANSACTION_HASH --write
+npm run arc:deploy:verify -- `
+  --request .stflow-deployment/arc-testnet-request.json `
+  --address 0xDEPLOYED_ADDRESS `
+  --tx 0xTRANSACTION_HASH
 ```
 
-The write is refused if validation fails or a record already exists. Commit the
-record separately so the deployment evidence is auditable.
+The verifier rejects unknown, duplicate, missing, or valueless flags. It verifies
+the manifest checksum, rebuilds the manifest's source commit from a fresh Git
+archive, and requires an exact manifest match before contacting Arc RPC. It then
+requires:
+
+- chain ID `5042002`;
+- a successful receipt that created the supplied address;
+- transaction and receipt hashes, block numbers, block hashes, and deployer to
+  agree;
+- transaction `to` to be null and `input` to exactly equal manifest creation data;
+- deployed runtime bytecode to exactly equal the manifest template after inserting
+  immutable Arc USDC;
+- `registry.usdc()` to equal fixed Arc USDC;
+- USDC `decimals()` to return a complete 32-byte ABI word equal to 6.
+
+**Checkpoint C:** Compare the printed address, transaction, block, deployer, source
+commit, request checksum and hashes with MetaMask, Arcscan and the manifest.
+
+Only after that review, create the evidence file:
+
+```powershell
+npm run arc:deploy:verify -- `
+  --request .stflow-deployment/arc-testnet-request.json `
+  --address 0xDEPLOYED_ADDRESS `
+  --tx 0xTRANSACTION_HASH `
+  --write
+```
+
+`--write` is effective only after every check passes and refuses to overwrite an
+existing `contracts/deployment/arc-testnet.json`.
 
 ## 4. Verify source on Arcscan
 
-If Arcscan exposes the Blockscout verification flow:
+If Arcscan exposes Blockscout standard JSON verification:
 
-1. Open the deployed address, then **Code** → **Verify & Publish**.
+1. Open the deployed address → **Code** → **Verify & Publish**.
 2. Choose **Solidity (Standard JSON Input)**.
-3. Select compiler `v0.8.30+commit.73712a01`.
+3. Select `v0.8.30+commit.73712a01`.
 4. Upload `.stflow-deployment/standard-input.json`.
-5. Set the contract identifier to
+5. Select
    `contracts/src/STFlowInvoiceRegistry.sol:STFlowInvoiceRegistry`.
-6. If constructor arguments are requested separately, provide the ABI-encoded
-   address only:
+6. If requested separately, enter constructor arguments without `0x`:
    `0000000000000000000000003600000000000000000000000000000000000000`.
-7. Submit and wait until Arcscan marks the source verified.
 
-Confirm the standard-input SHA-256 still matches
-`.stflow-deployment/arc-testnet-request.json`. If Arcscan does not offer Standard
-JSON verification, retain the bundle and checksums and use Blockscout's verification
-API/UI when that option becomes available. Do not mark source verification true
-before Arcscan confirms it.
+Use the manifest's full compiler settings; currently these include the recorded
+`evmVersion`, optimizer, metadata bytecode hash/CBOR choice, `viaIR`, remappings and
+libraries. Do not mark `verification.sourceCode` true until Arcscan confirms the
+exact source.
 
-After verification, update only
-`verification.sourceCode` in the recorded deployment evidence to `true`, with the
-Arcscan verification URL reviewed in the commit.
+## 5. Evidence and smoke test
 
-## 5. Post-deploy smoke check
+The validated record includes network/RPC/explorer URLs, address, transaction,
+block number/hash, deployer, constructor, source commit and target, full compiler
+settings, standard JSON hash, creation/runtime code hashes, manifest checksum,
+validation timestamp, and verification flags.
 
-Record:
+Before configuring the application, use only low-value testnet funds:
 
-- deployed address;
-- deployment transaction hash;
-- block number and block hash;
-- deployer address;
-- source commit;
-- compiler version and optimizer runs;
-- constructor USDC address;
-- creation-data, artifact-template, and deployed-code hashes;
-- standard-input SHA-256;
-- Arcscan contract and verification URLs;
-- validation timestamp and reviewer;
-- source verification status.
-
-Before wiring the address into the application, use a low-value test invoice:
-
-1. merchant creates an invoice for a different assigned payer;
-2. a third wallet is rejected;
-3. the assigned payer approves exactly the invoice amount and pays;
-4. the merchant receives the exact USDC amount;
-5. the invoice becomes paid and cannot be paid or cancelled again;
-6. create a second invoice and verify merchant cancellation.
-
-Do not reuse production funds or mainnet accounts for this smoke test.
+1. create an invoice assigned to another payer;
+2. confirm a third wallet cannot pay;
+3. assigned payer approves exactly the invoice amount and pays;
+4. verify exact merchant receipt and terminal paid status;
+5. confirm duplicate payment/cancellation fail;
+6. create and cancel a second invoice as merchant.
 
 ## Release checks
-
-Run from the repository root:
 
 ```powershell
 forge fmt --check
@@ -180,8 +185,7 @@ npm test
 npm run typecheck
 npm run lint
 npm run build
-node --test tests/arcDeployment.test.ts
 ```
 
-All commands must pass against the same clean source commit used to generate the
-deployment request.
+All checks, preparation, signing and verification must refer to the same immutable
+source commit.
