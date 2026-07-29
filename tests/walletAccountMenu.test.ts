@@ -2,22 +2,22 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync("components/wallet/WalletConnectControl.tsx", "utf8");
+const control = readFileSync("components/wallet/WalletConnectControl.tsx", "utf8");
 
-test("connected wallet control exposes an accessible account menu", () => {
-  assert.match(source, /aria-expanded=\{open\}/);
-  assert.match(source, /aria-haspopup="menu"/);
-  assert.match(source, /role="menu"/);
-  assert.match(source, /role="menuitem"/);
+test("valid connected accounts mount an isolated account popover", () => {
+  assert.match(control, /<WalletAccountPopover/);
+  assert.match(control, /key=\{account\.address\}/);
+  assert.doesNotMatch(control, /useState|useEffect|useRef|useDisconnect/);
 });
 
-test("account menu supports copy, disconnect, outside click, and Escape", () => {
-  assert.match(source, /navigator\.clipboard\.writeText/);
-  assert.match(source, /useDisconnect/);
-  assert.match(source, /pointerdown/);
-  assert.match(source, /event\.key === "Escape"/);
-});
+test("account popover uses grouped buttons without claiming ARIA menu behavior", () => {
+  const popover = readFileSync("components/wallet/WalletAccountPopover.tsx", "utf8");
 
-test("connected wallet no longer delegates to RainbowKit's account modal", () => {
-  assert.doesNotMatch(source, /openAccountModal/);
+  assert.match(popover, /aria-expanded=\{open\}/);
+  assert.match(popover, /aria-label="Wallet account actions"/);
+  assert.match(popover, /role="group"/);
+  assert.doesNotMatch(popover, /role="menu"|role="menuitem"|aria-haspopup="menu"/);
+  assert.match(popover, /copyButtonRef\.current\?\.focus/);
+  assert.match(popover, /triggerRef\.current\?\.focus/);
+  assert.match(popover, /setCopied\(false\)/);
 });
