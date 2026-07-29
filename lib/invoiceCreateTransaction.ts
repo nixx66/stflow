@@ -159,6 +159,32 @@ export function beginCreateRequest(activeRequest: Hex | undefined, requestId: He
   return requestId;
 }
 
+export function validatePrewriteSnapshot(
+  snapshot: { address?: Address; chainId: number },
+  merchant: Address
+) {
+  if (!snapshot.address || !isAddressEqual(snapshot.address, merchant)) {
+    throw new Error("The connected wallet changed before invoice broadcast.");
+  }
+  if (snapshot.chainId !== 5042002) {
+    throw new Error("The connected network changed before invoice broadcast.");
+  }
+}
+
+export function resolveConfirmedCreation<T>(input: {
+  invoice: T;
+  requestId: Hex;
+  txHash: Hex;
+  metadataError?: string;
+}) {
+  return {
+    invoice: input.invoice,
+    requestId: input.requestId,
+    txHash: input.txHash,
+    metadataPending: Boolean(input.metadataError)
+  };
+}
+
 export function parseInvoiceAmount(value: string): bigint {
   const amount = value.trim();
 

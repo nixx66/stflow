@@ -18,6 +18,8 @@ import {
   parseInvoiceAmount,
   parseInvoiceDeadline,
   reduceCreateState,
+  resolveConfirmedCreation,
+  validatePrewriteSnapshot,
   validateInvoiceCreated,
   type CreateState
 } from "@/lib/invoiceCreateTransaction";
@@ -82,13 +84,13 @@ function assertWalletSnapshot(
   requireArcChain: boolean
 ) {
   const account = getAccount(config);
-
-  if (!account.address || getAddress(account.address) !== merchant) {
-    throw new Error("The connected wallet changed while creating the invoice.");
-  }
-  if (requireArcChain && getChainId(config) !== ARC_TESTNET.chainId) {
-    throw new Error("The connected network changed while creating the invoice.");
-  }
+  validatePrewriteSnapshot(
+    {
+      address: account.address,
+      chainId: requireArcChain ? getChainId(config) : ARC_TESTNET.chainId
+    },
+    merchant
+  );
 }
 
 export function useCreateInvoice() {
@@ -200,8 +202,6 @@ export function useCreateInvoice() {
           metadataError = errorMessage(error);
         }
 
-        assertWalletSnapshot(config, merchant, true);
-
         if (metadataPending) {
           dispatch({
             type: "metadata_failed",
@@ -211,7 +211,12 @@ export function useCreateInvoice() {
         } else {
           dispatch({ type: "metadata_saved", requestId });
         }
-        return { invoice, requestId, txHash, metadataPending };
+        return resolveConfirmedCreation({
+          invoice,
+          requestId,
+          txHash,
+          metadataError
+        });
       } catch (error) {
         dispatch({ type: "failed", requestId, error: errorMessage(error) });
         throw error;

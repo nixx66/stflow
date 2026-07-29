@@ -15,6 +15,8 @@ import {
   nextCreateStage,
   parseInvoiceAmount,
   parseInvoiceDeadline,
+  resolveConfirmedCreation,
+  validatePrewriteSnapshot,
   reduceCreateState,
   validateInvoiceCreated
 } from "../lib/invoiceCreateTransaction.ts";
@@ -278,6 +280,41 @@ test("preserves confirmed transaction recovery data when a retry starts", () => 
   assert.equal(retry.txHash, undefined);
   assert.equal(retry.recovery?.txHash, TX_HASH);
   assert.deepEqual(retry.recovery?.invoice, expected);
+});
+
+test("aborts before broadcast when the wallet or chain no longer matches", () => {
+  assert.throws(
+    () =>
+      validatePrewriteSnapshot(
+        {
+          address: getAddress("0x9999999999999999999999999999999999999999"),
+          chainId: 5042002
+        },
+        expected.merchant
+      ),
+    /wallet changed/
+  );
+  assert.throws(
+    () =>
+      validatePrewriteSnapshot(
+        { address: expected.merchant, chainId: 1 },
+        expected.merchant
+      ),
+    /network changed/
+  );
+});
+
+test("returns a confirmed invoice even if the wallet changes after broadcast", () => {
+  const result = resolveConfirmedCreation({
+    invoice: expected,
+    requestId: REQUEST_A,
+    txHash: TX_HASH,
+    metadataError: "Metadata service unavailable"
+  });
+
+  assert.equal(result.invoice, expected);
+  assert.equal(result.txHash, TX_HASH);
+  assert.equal(result.metadataPending, true);
 });
 
 test("creation flow is chain-backed and isolated from the legacy invoice route", async () => {
