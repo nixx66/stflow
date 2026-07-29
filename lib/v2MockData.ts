@@ -488,7 +488,7 @@ export function getV2InvoiceAsInvoice(invoiceId: string): Invoice | null {
     currency: "USDC",
     status: invoice.status,
     paymentTxHash: invoice.txHash,
-    chainId: Number(process.env.NEXT_PUBLIC_ARC_CHAIN_ID || ARC_TESTNET.chainId),
+    chainId: ARC_TESTNET.chainId,
     createdAt: invoice.createdAt,
     paidAt: invoice.paidAt
   };

@@ -2,12 +2,11 @@
 
 import { ArrowLeft, Copy, ExternalLink, Printer } from "lucide-react";
 import Link from "next/link";
-import { formatUnits, type Hex } from "viem";
+import { type Hex } from "viem";
 import { getArcExplorerTxUrl } from "@/lib/arc";
-import { copyToClipboard, formatCurrency, formatDate, shortenAddress } from "@/lib/format";
+import { copyToClipboard, formatDate, shortenAddress } from "@/lib/format";
 import type { InvoiceMetadata } from "@/lib/invoiceMetadata";
-import type { ChainInvoice } from "@/lib/paymentTransaction";
-import { USDC_DECIMALS } from "@/lib/usdc";
+import { formatUsdc, type ChainInvoice } from "@/lib/paymentTransaction";
 import { StatusBadge } from "./StatusBadge";
 
 export function ReceiptCard({
@@ -38,7 +37,7 @@ export function ReceiptCard({
       <div className="my-8 rounded-lg bg-slate-50 p-6">
         <p className="text-sm text-muted">Amount paid</p>
         <p className="mt-1 text-4xl font-bold text-ink">
-          {formatCurrency(formatUnits(invoice.amount, USDC_DECIMALS), "USDC")}
+          {formatUsdc(invoice.amount)} USDC
         </p>
       </div>
 

@@ -10,9 +10,16 @@ import {
 } from "viem";
 import {
   beginPayment,
+  chainInvoiceStatus,
+  classifyMetadataResponse,
+  findVerifiedPaymentHash,
+  formatUsdc,
   getPaymentPlan,
   invoicePaidEvent,
+  isCurrentInvoiceLoad,
+  normalizeInvoiceId,
   reducePaymentState,
+  validateRegistryUsdc,
   validateConfirmedPayment,
   validateInvoicePaid,
   validatePaymentSnapshot,
@@ -75,6 +82,47 @@ test("plans an exact approval when allowance is below the invoice amount", () =>
     needsApproval: true,
     approvalAmount: BigInt(25_000000)
   });
+});
+
+test("formats micro-USDC and uint128 values without Number conversion", () => {
+  assert.equal(formatUsdc(BigInt(1)), "0.000001");
+  assert.equal(formatUsdc(BigInt(1_000000)), "1");
+  assert.equal(formatUsdc(BigInt(1_234567)), "1.234567");
+  assert.equal(
+    formatUsdc((BigInt(1) << BigInt(128)) - BigInt(1)),
+    "340282366920938463463374607431768.211455"
+  );
+});
+
+test("normalizes bytes32 ids and treats cancelled as its own status", () => {
+  assert.equal(normalizeInvoiceId(ID.toUpperCase()), ID);
+  assert.equal(chainInvoiceStatus(0), "pending");
+  assert.equal(chainInvoiceStatus(1), "paid");
+  assert.equal(chainInvoiceStatus(2), "cancelled");
+  assert.throws(() => chainInvoiceStatus(3), /Unknown invoice status/);
+});
+
+test("requires the registry to point at the fixed Arc USDC contract", () => {
+  assert.doesNotThrow(() =>
+    validateRegistryUsdc("0x3600000000000000000000000000000000000000")
+  );
+  assert.throws(() => validateRegistryUsdc(OTHER), /unexpected USDC/);
+});
+
+test("classifies missing metadata separately from retryable service failures", () => {
+  assert.equal(classifyMetadataResponse(200), "available");
+  assert.equal(classifyMetadataResponse(404), "missing");
+  assert.equal(classifyMetadataResponse(503), "retryable-error");
+});
+
+test("guards invoice loads by normalized id and generation", () => {
+  const token = { invoiceId: normalizeInvoiceId(ID.toUpperCase()), generation: 3 };
+  assert.equal(isCurrentInvoiceLoad(token, ID, 3), true);
+  assert.equal(isCurrentInvoiceLoad(token, ID, 4), false);
+  assert.equal(
+    isCurrentInvoiceLoad(token, `0x${"ab".repeat(32)}`, 3),
+    false
+  );
 });
 
 test("skips approval when the existing allowance covers the invoice", () => {
@@ -177,8 +225,14 @@ test("requires a final Paid chain re-read with a non-zero paidAt", () => {
 });
 
 test("serializes payment attempts and ignores stale request actions", () => {
-  assert.equal(beginPayment(undefined, REQUEST_A), REQUEST_A);
-  assert.throws(() => beginPayment(REQUEST_A, REQUEST_B), /already in progress/);
+  assert.deepEqual(beginPayment(undefined, REQUEST_A), {
+    acquired: true,
+    requestId: REQUEST_A
+  });
+  assert.deepEqual(beginPayment(REQUEST_A, REQUEST_B), {
+    acquired: false,
+    error: "Invoice payment is already in progress."
+  });
 
   const current = { stage: "approval-signing" as const, requestId: REQUEST_B };
   assert.equal(
@@ -191,10 +245,57 @@ test("serializes payment attempts and ignores stale request actions", () => {
   );
 });
 
+test("resets payment state when the normalized invoice id changes", () => {
+  const reset = reducePaymentState(
+    {
+      stage: "success",
+      invoiceId: ID,
+      requestId: REQUEST_A,
+      paymentTxHash: PAYMENT_HASH
+    },
+    { type: "reset", invoiceId: `0x${"ab".repeat(32)}` }
+  );
+  assert.deepEqual(reset, {
+    stage: "idle",
+    invoiceId: `0x${"ab".repeat(32)}`
+  });
+});
+
+test("accepts a historical hash only after full receipt validation", async () => {
+  const validReceipt = { status: "success" as const, logs: [paidLog()] };
+  assert.equal(
+    await findVerifiedPaymentHash(
+      [PAYMENT_HASH],
+      async () => validReceipt,
+      REGISTRY,
+      { id: ID, payer: PAYER, merchant: MERCHANT, amount: invoice.amount }
+    ),
+    PAYMENT_HASH
+  );
+  assert.equal(
+    await findVerifiedPaymentHash(
+      [PAYMENT_HASH],
+      async () => ({ status: "reverted" as const, logs: [paidLog()] }),
+      REGISTRY,
+      { id: ID, payer: PAYER, merchant: MERCHANT, amount: invoice.amount }
+    ),
+    undefined
+  );
+  assert.equal(
+    await findVerifiedPaymentHash(
+      [PAYMENT_HASH, APPROVAL_HASH],
+      async () => validReceipt,
+      REGISTRY,
+      { id: ID, payer: PAYER, merchant: MERCHANT, amount: invoice.amount }
+    ),
+    undefined
+  );
+});
+
 test("preserves broadcast hashes through confirmation and later wallet changes", () => {
   let state = reducePaymentState(
     { stage: "idle" },
-    { type: "started", requestId: REQUEST_A }
+    { type: "started", invoiceId: ID, requestId: REQUEST_A }
   );
   assert.equal(state.stage, "checking");
   state = reducePaymentState(state, {
@@ -229,6 +330,7 @@ test("preserves broadcast hashes through confirmation and later wallet changes",
 test("payment hook contains no mock settlement or direct transfer path", async () => {
   const hook = await readFile("hooks/usePayInvoice.ts", "utf8");
   assert.match(hook, /getInvoice/);
+  assert.match(hook, /functionName:\s*"usdc"/);
   assert.match(hook, /allowance/);
   assert.match(hook, /approve/);
   assert.match(hook, /payInvoice/);

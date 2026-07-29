@@ -82,7 +82,7 @@ export function createMockInvoice(input: CreateInvoiceInput) {
     amount: input.amount,
     currency: "USDC",
     status: "pending",
-    chainId: Number(process.env.NEXT_PUBLIC_ARC_CHAIN_ID || ARC_TESTNET.chainId),
+    chainId: ARC_TESTNET.chainId,
     createdAt: new Date().toISOString(),
     expiresAt: input.expiresAt
   };

@@ -1,8 +1,7 @@
 import type { Address } from "viem";
 import { ARC_CONTRACTS, ARC_USDC_ERC20_DECIMALS } from "./arc";
 
-export const USDC_ADDRESS = (process.env.NEXT_PUBLIC_USDC_ADDRESS ||
-  ARC_CONTRACTS.usdc) as Address;
+export const USDC_ADDRESS = ARC_CONTRACTS.usdc as Address;
 
 export const USDC_DECIMALS = ARC_USDC_ERC20_DECIMALS;
 

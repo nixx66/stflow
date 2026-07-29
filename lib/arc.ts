@@ -59,5 +59,5 @@ export const arcMemoAbi = [
 export type STFlowPaymentMode = "mock" | "erc20-transfer" | "memo-transfer";
 
 export function getArcExplorerTxUrl(txHash: string) {
-  return `${process.env.NEXT_PUBLIC_ARC_EXPLORER_URL || ARC_TESTNET.explorerUrl}/tx/${txHash}`;
+  return `${ARC_TESTNET.explorerUrl}/tx/${txHash}`;
 }

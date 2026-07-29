@@ -3,12 +3,12 @@
 import { ArrowRight, CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { formatUnits, isAddressEqual } from "viem";
+import { isAddressEqual } from "viem";
 import { getAddress } from "viem";
 import { usePayInvoice } from "@/hooks/usePayInvoice";
 import { ARC_TESTNET, getArcExplorerTxUrl } from "@/lib/arc";
-import { formatCurrency, shortenAddress } from "@/lib/format";
-import { USDC_DECIMALS } from "@/lib/usdc";
+import { shortenAddress } from "@/lib/format";
+import { formatUsdc } from "@/lib/paymentTransaction";
 import { StatusBadge } from "./StatusBadge";
 import { WalletStatusCard } from "./wallet/WalletStatusCard";
 
@@ -83,8 +83,13 @@ export function PaymentPanel({ invoiceId }: { invoiceId: string }) {
     connectedAddress && isAddressEqual(getAddress(connectedAddress), invoice.payer);
   const canPay =
     payerConnected && correctPayer && invoice.status === 0 && !isExpired && !isPaying;
-  const status = isPaid ? "paid" : isExpired || isCancelled ? "expired" : "pending";
-  const amount = formatUnits(invoice.amount, USDC_DECIMALS);
+  const status = isPaid
+    ? "paid"
+    : isCancelled
+      ? "cancelled"
+      : isExpired
+        ? "expired"
+        : "pending";
 
   const buttonLabel = isPaid
     ? "Already Paid"
@@ -102,7 +107,7 @@ export function PaymentPanel({ invoiceId }: { invoiceId: string }) {
 
   const handlePay = async () => {
     const result = await pay();
-    if (result) {
+    if (result && "invoice" in result && !result.stale) {
       window.setTimeout(
         () => router.push(`/receipt/${invoice.id}?tx=${result.txHash}`),
         700
@@ -131,7 +136,9 @@ export function PaymentPanel({ invoiceId }: { invoiceId: string }) {
 
         <div className="mt-6 rounded-lg bg-slate-50 p-5">
           <p className="text-sm text-muted">Amount</p>
-          <p className="mt-1 text-4xl font-bold text-ink">{formatCurrency(amount)}</p>
+          <p className="mt-1 text-4xl font-bold text-ink">
+            {formatUsdc(invoice.amount)} USDC
+          </p>
         </div>
 
         <dl className="mt-6 space-y-4 text-sm">

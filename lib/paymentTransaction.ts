@@ -6,6 +6,7 @@ import {
   type Address,
   type Hex
 } from "viem";
+import { ARC_CONTRACTS } from "./arc.ts";
 
 export type ChainInvoice = {
   id: Hex;
@@ -19,6 +20,8 @@ export type ChainInvoice = {
   status: number;
 };
 
+export type ChainInvoiceState = "pending" | "paid" | "cancelled";
+
 export type PaymentStage =
   | "idle"
   | "checking"
@@ -31,6 +34,7 @@ export type PaymentStage =
 
 export type PaymentState = {
   stage: PaymentStage;
+  invoiceId?: Hex;
   requestId?: Hex;
   approvalTxHash?: Hex;
   paymentTxHash?: Hex;
@@ -38,7 +42,8 @@ export type PaymentState = {
 };
 
 type PaymentAction =
-  | { type: "started"; requestId: Hex }
+  | { type: "reset"; invoiceId: Hex }
+  | { type: "started"; invoiceId: Hex; requestId: Hex }
   | { type: "planned"; requestId: Hex; needsApproval: boolean }
   | { type: "approval_hash"; requestId: Hex; txHash: Hex }
   | { type: "approval_confirmed"; requestId: Hex }
@@ -74,6 +79,55 @@ export function getPaymentPlan(balance: bigint, allowance: bigint, amount: bigin
   };
 }
 
+export function formatUsdc(amount: bigint) {
+  const whole = amount / BigInt(1_000_000);
+  const fraction = (amount % BigInt(1_000_000))
+    .toString()
+    .padStart(6, "0")
+    .replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
+export function normalizeInvoiceId(value: string): Hex {
+  const normalized = value.startsWith("0X")
+    ? `0x${value.slice(2).toLowerCase()}`
+    : value.toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error("Invoice ID must be a bytes32 value.");
+  }
+  return normalized as Hex;
+}
+
+export function chainInvoiceStatus(status: number): ChainInvoiceState {
+  if (status === 0) return "pending";
+  if (status === 1) return "paid";
+  if (status === 2) return "cancelled";
+  throw new Error("Unknown invoice status.");
+}
+
+export function validateRegistryUsdc(address: Address) {
+  if (!isAddressEqual(address, ARC_CONTRACTS.usdc)) {
+    throw new Error("Invoice registry uses an unexpected USDC contract.");
+  }
+}
+
+export function classifyMetadataResponse(status: number) {
+  if (status >= 200 && status < 300) return "available" as const;
+  if (status === 404) return "missing" as const;
+  return "retryable-error" as const;
+}
+
+export function isCurrentInvoiceLoad(
+  token: { invoiceId: Hex; generation: number },
+  invoiceId: string,
+  generation: number
+) {
+  return (
+    token.generation === generation &&
+    token.invoiceId === normalizeInvoiceId(invoiceId)
+  );
+}
+
 export function validatePaymentSnapshot(
   invoice: ChainInvoice,
   payer: Address,
@@ -105,15 +159,21 @@ export function validatePaymentWrite(
 
 export function beginPayment(activeRequest: Hex | undefined, requestId: Hex) {
   if (activeRequest) {
-    throw new Error("Invoice payment is already in progress.");
+    return {
+      acquired: false as const,
+      error: "Invoice payment is already in progress."
+    };
   }
-  return requestId;
+  return { acquired: true as const, requestId };
 }
 
 export function reducePaymentState(
   state: PaymentState,
   action: PaymentAction
 ): PaymentState {
+  if (action.type === "reset") {
+    return { stage: "idle", invoiceId: normalizeInvoiceId(action.invoiceId) };
+  }
   if (action.type !== "started" && state.requestId !== action.requestId) {
     return state;
   }
@@ -122,6 +182,7 @@ export function reducePaymentState(
     case "started":
       return {
         stage: "checking",
+        invoiceId: normalizeInvoiceId(action.invoiceId),
         requestId: action.requestId
       };
     case "planned":
@@ -159,11 +220,29 @@ type PaidEvent = {
 
 function samePayment(actual: PaidEvent, expected: PaidEvent) {
   return (
-    actual.id === expected.id &&
+    normalizeInvoiceId(actual.id) === normalizeInvoiceId(expected.id) &&
     isAddressEqual(actual.payer, expected.payer) &&
     isAddressEqual(actual.merchant, expected.merchant) &&
     actual.amount === expected.amount
   );
+}
+
+export async function findVerifiedPaymentHash(
+  hashes: readonly Hex[],
+  getReceipt: (hash: Hex) => Promise<PaymentReceipt>,
+  registry: Address,
+  expected: PaidEvent
+) {
+  const valid: Hex[] = [];
+  for (const hash of new Set(hashes)) {
+    try {
+      validateInvoicePaid(await getReceipt(hash), registry, expected);
+      valid.push(hash);
+    } catch {
+      // A candidate hash is not proof unless its complete receipt matches.
+    }
+  }
+  return valid.length === 1 ? valid[0] : undefined;
 }
 
 export function validateInvoicePaid(
@@ -212,7 +291,7 @@ export function validateConfirmedPayment(
   submitted: ChainInvoice
 ) {
   if (
-    confirmed.id !== submitted.id ||
+    normalizeInvoiceId(confirmed.id) !== normalizeInvoiceId(submitted.id) ||
     !isAddressEqual(confirmed.merchant, submitted.merchant) ||
     !isAddressEqual(confirmed.payer, submitted.payer) ||
     confirmed.amount !== submitted.amount ||

@@ -13,11 +13,9 @@ import {
 import {
   bytesToHex,
   createPublicClient,
-  formatUnits,
   getAddress,
   http,
   isAddressEqual,
-  isHex,
   type Address,
   type Hex
 } from "viem";
@@ -27,17 +25,23 @@ import { arcTestnet } from "@/lib/chains";
 import { hashInvoiceMetadata, type InvoiceMetadata } from "@/lib/invoiceMetadata";
 import {
   beginPayment,
+  classifyMetadataResponse,
+  findVerifiedPaymentHash,
+  formatUsdc,
   getPaymentPlan,
   invoicePaidEvent,
+  isCurrentInvoiceLoad,
+  normalizeInvoiceId,
   reducePaymentState,
   validateConfirmedPayment,
   validateInvoicePaid,
   validatePaymentSnapshot,
   validatePaymentWrite,
+  validateRegistryUsdc,
   type ChainInvoice,
   type PaymentState
 } from "@/lib/paymentTransaction";
-import { USDC_ADDRESS, USDC_DECIMALS, usdcAbi } from "@/lib/usdc";
+import { USDC_ADDRESS, usdcAbi } from "@/lib/usdc";
 
 const initialState: PaymentState = { stage: "idle" };
 const arcClient = createPublicClient({ chain: arcTestnet, transport: http() });
@@ -51,10 +55,7 @@ function requestId(): Hex {
 }
 
 function parseInvoiceId(value: string): Hex {
-  if (!isHex(value) || value.length !== 66) {
-    throw new Error("Invoice ID must be a bytes32 value.");
-  }
-  return value;
+  return normalizeInvoiceId(value);
 }
 
 function accountSnapshot(config: Parameters<typeof getAccount>[0]) {
@@ -66,7 +67,11 @@ type Metadata = InvoiceMetadata;
 
 async function getVerifiedMetadata(id: Hex, expectedHash: Hex) {
   const response = await fetch(`/api/v1/invoices/${id}`, { cache: "no-store" });
-  if (!response.ok) return undefined;
+  const availability = classifyMetadataResponse(response.status);
+  if (availability === "missing") return undefined;
+  if (availability === "retryable-error") {
+    throw new Error("Invoice metadata is temporarily unavailable.");
+  }
 
   const payload = (await response.json()) as { metadata?: Metadata };
   if (!payload.metadata || hashInvoiceMetadata(payload.metadata) !== expectedHash) {
@@ -85,79 +90,134 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
   const [isLoading, setIsLoading] = useState(true);
   const [knownPaymentHash, setKnownPaymentHash] = useState<Hex>();
   const activeRequest = useRef<Hex | undefined>(undefined);
+  const loadGeneration = useRef(0);
+  const invoiceKey = useRef<Hex | undefined>(undefined);
+  try {
+    invoiceKey.current = parseInvoiceId(invoiceId);
+  } catch {
+    invoiceKey.current = undefined;
+  }
 
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
+    let id: Hex;
+    try {
+      id = parseInvoiceId(invoiceId);
+    } catch (error) {
+      setInvoice(undefined);
+      setMetadata(undefined);
+      setKnownPaymentHash(undefined);
+      setLoadError(message(error));
+      setIsLoading(false);
+      return;
+    }
+    const token = { invoiceId: id, generation };
+    invoiceKey.current = id;
+    const current = () =>
+      isCurrentInvoiceLoad(token, invoiceKey.current ?? id, loadGeneration.current);
+
     setIsLoading(true);
     setLoadError(undefined);
+    setKnownPaymentHash(undefined);
 
     try {
-      const id = parseInvoiceId(invoiceId);
       const { INVOICE_REGISTRY_ADDRESS, invoiceRegistryAbi } = await import(
         "@/lib/contracts/invoiceRegistry"
       );
-      const current = (await readContract(config, {
+      const chainInvoice = (await readContract(config, {
         address: INVOICE_REGISTRY_ADDRESS,
         abi: invoiceRegistryAbi,
         functionName: "getInvoice",
         args: [id],
         chainId: ARC_TESTNET.chainId
       })) as ChainInvoice;
-
-      setInvoice(current);
-      try {
-        setMetadata(await getVerifiedMetadata(id, current.metadataHash));
-      } catch (error) {
-        setMetadata(undefined);
-        setLoadError(message(error));
+      if (normalizeInvoiceId(chainInvoice.id) !== id) {
+        throw new Error("Registry returned a different invoice ID.");
       }
 
-      if (current.status === 1) {
-        try {
-          if (receiptHash) {
-            const receipt = await arcClient.getTransactionReceipt({ hash: receiptHash });
-            validateInvoicePaid(receipt, INVOICE_REGISTRY_ADDRESS, {
-              id,
-              payer: current.payer,
-              merchant: current.merchant,
-              amount: current.amount
-            });
-            setKnownPaymentHash(receiptHash);
-            return;
-          }
+      if (!current()) return;
+      setInvoice(chainInvoice);
+      try {
+        const verified = await getVerifiedMetadata(id, chainInvoice.metadataHash);
+        if (current()) setMetadata(verified);
+      } catch (error) {
+        if (current()) {
+          setMetadata(undefined);
+          setLoadError(message(error));
+        }
+      }
 
-          const logs = await arcClient.getLogs({
-            address: INVOICE_REGISTRY_ADDRESS,
-            event: invoicePaidEvent,
-            args: { id },
-            fromBlock: "earliest",
-            toBlock: "latest"
-          });
-          setKnownPaymentHash(
-            logs.length === 1 ? logs[0].transactionHash : undefined
+      if (chainInvoice.status === 1 && current()) {
+        try {
+          const hashes = receiptHash
+            ? [receiptHash]
+            : (
+                await arcClient.getLogs({
+                  address: INVOICE_REGISTRY_ADDRESS,
+                  event: invoicePaidEvent,
+                  args: { id: chainInvoice.id },
+                  fromBlock: "earliest",
+                  toBlock: "latest"
+                })
+              ).map((log) => log.transactionHash);
+          const verifiedHash = await findVerifiedPaymentHash(
+            hashes,
+            (hash) => arcClient.getTransactionReceipt({ hash }),
+            INVOICE_REGISTRY_ADDRESS,
+            {
+              id: chainInvoice.id,
+              payer: chainInvoice.payer,
+              merchant: chainInvoice.merchant,
+              amount: chainInvoice.amount
+            }
           );
+          if (current()) setKnownPaymentHash(verifiedHash);
         } catch {
-          setKnownPaymentHash(undefined);
+          if (current()) setKnownPaymentHash(undefined);
         }
       }
     } catch (error) {
-      setInvoice(undefined);
-      setMetadata(undefined);
-      setLoadError(message(error));
+      if (current()) {
+        setInvoice(undefined);
+        setMetadata(undefined);
+        setLoadError(message(error));
+      }
     } finally {
-      setIsLoading(false);
+      if (current()) setIsLoading(false);
     }
   }, [config, invoiceId, receiptHash]);
 
   useEffect(() => {
+    try {
+      const id = parseInvoiceId(invoiceId);
+      invoiceKey.current = id;
+      dispatch({ type: "reset", invoiceId: id });
+    } catch {
+      invoiceKey.current = undefined;
+    }
+    setInvoice(undefined);
+    setMetadata(undefined);
+    setKnownPaymentHash(undefined);
+    setLoadError(undefined);
     void load();
   }, [load]);
 
   const pay = useCallback(async () => {
     const paymentRequest = requestId();
-    activeRequest.current = beginPayment(activeRequest.current, paymentRequest);
-    dispatch({ type: "started", requestId: paymentRequest });
+    let ownsRequest = false;
 
     try {
+      const id = parseInvoiceId(invoiceId);
+      if (invoiceKey.current !== id) {
+        return { error: "Invoice changed before payment preparation." };
+      }
+      const acquisition = beginPayment(activeRequest.current, paymentRequest);
+      if (!acquisition.acquired) return { error: acquisition.error };
+
+      ownsRequest = true;
+      activeRequest.current = acquisition.requestId;
+      dispatch({ type: "started", invoiceId: id, requestId: paymentRequest });
+
       if (!isConnected || !address) {
         throw new Error("Connect the assigned payer wallet before paying.");
       }
@@ -167,17 +227,25 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
         await switchChain(config, { chainId: ARC_TESTNET.chainId });
       }
 
-      const id = parseInvoiceId(invoiceId);
       const { INVOICE_REGISTRY_ADDRESS, invoiceRegistryAbi } = await import(
         "@/lib/contracts/invoiceRegistry"
       );
-      const code = await getBytecode(config, {
-        address: INVOICE_REGISTRY_ADDRESS,
-        chainId: ARC_TESTNET.chainId
-      });
+      const [code, registryUsdc] = await Promise.all([
+        getBytecode(config, {
+          address: INVOICE_REGISTRY_ADDRESS,
+          chainId: ARC_TESTNET.chainId
+        }),
+        readContract(config, {
+          address: INVOICE_REGISTRY_ADDRESS,
+          abi: invoiceRegistryAbi,
+          functionName: "usdc",
+          chainId: ARC_TESTNET.chainId
+        })
+      ]);
       if (!code || code === "0x") {
         throw new Error("Invoice registry is not deployed on Arc Testnet.");
       }
+      validateRegistryUsdc(registryUsdc);
 
       const submitted = (await readContract(config, {
         address: INVOICE_REGISTRY_ADDRESS,
@@ -186,6 +254,9 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
         args: [id],
         chainId: ARC_TESTNET.chainId
       })) as ChainInvoice;
+      if (normalizeInvoiceId(submitted.id) !== id) {
+        throw new Error("Registry returned a different invoice ID.");
+      }
       validatePaymentSnapshot(
         submitted,
         payer,
@@ -211,7 +282,7 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
       const plan = getPaymentPlan(balance, allowance, submitted.amount);
       if (!plan.canPay) {
         throw new Error(
-          `Insufficient USDC balance. Required ${formatUnits(submitted.amount, USDC_DECIMALS)} USDC.`
+          `Insufficient USDC balance. Required ${formatUsdc(submitted.amount)} USDC.`
         );
       }
 
@@ -222,6 +293,9 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
       });
 
       if (plan.needsApproval) {
+        if (invoiceKey.current !== id) {
+          throw new Error("Invoice changed before approval broadcast.");
+        }
         validatePaymentWrite(accountSnapshot(config), payer);
         const approvalTxHash = await writeContract(config, {
           address: USDC_ADDRESS,
@@ -257,7 +331,6 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
         dispatch({ type: "approval_confirmed", requestId: paymentRequest });
       }
 
-      validatePaymentWrite(accountSnapshot(config), payer);
       const latest = (await readContract(config, {
         address: INVOICE_REGISTRY_ADDRESS,
         abi: invoiceRegistryAbi,
@@ -267,12 +340,16 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
       })) as ChainInvoice;
       validatePaymentSnapshot(latest, payer, BigInt(Math.floor(Date.now() / 1000)));
       if (
-        latest.id !== submitted.id ||
+        normalizeInvoiceId(latest.id) !== normalizeInvoiceId(submitted.id) ||
         latest.amount !== submitted.amount ||
         !isAddressEqual(latest.merchant, submitted.merchant)
       ) {
         throw new Error("Invoice chain data changed before payment broadcast.");
       }
+      if (invoiceKey.current !== id) {
+        throw new Error("Invoice changed before payment broadcast.");
+      }
+      validatePaymentWrite(accountSnapshot(config), payer);
 
       const paymentTxHash = await writeContract(config, {
         address: INVOICE_REGISTRY_ADDRESS,
@@ -280,7 +357,7 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
         account: payer,
         chainId: ARC_TESTNET.chainId,
         functionName: "payInvoice",
-        args: [id]
+        args: [submitted.id]
       });
       dispatch({
         type: "payment_hash",
@@ -293,7 +370,7 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
         hash: paymentTxHash
       });
       validateInvoicePaid(receipt, INVOICE_REGISTRY_ADDRESS, {
-        id,
+        id: submitted.id,
         payer,
         merchant: submitted.merchant,
         amount: submitted.amount
@@ -307,15 +384,18 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
         chainId: ARC_TESTNET.chainId
       })) as ChainInvoice;
       validateConfirmedPayment(confirmed, submitted);
-      setInvoice(confirmed);
-      setKnownPaymentHash(paymentTxHash);
+      const stale = invoiceKey.current !== id;
+      if (!stale) {
+        setInvoice(confirmed);
+        setKnownPaymentHash(paymentTxHash);
+      }
       dispatch({ type: "payment_confirmed", requestId: paymentRequest });
-      return { invoice: confirmed, txHash: paymentTxHash };
+      return { invoice: confirmed, txHash: paymentTxHash, stale };
     } catch (error) {
       dispatch({ type: "failed", requestId: paymentRequest, error: message(error) });
       return null;
     } finally {
-      if (activeRequest.current === paymentRequest) {
+      if (ownsRequest && activeRequest.current === paymentRequest) {
         activeRequest.current = undefined;
       }
     }

@@ -3,7 +3,7 @@ import { ARC_TESTNET } from "./arc.ts";
 
 export const MOCK_MERCHANT_A = "0xA12F8E7D5C4B3A2918076F5E4D3C2B1A09876543";
 export const MOCK_MERCHANT_B = "0xB98E7D6C5B4A39281706F5E4D3C2B1A098765432";
-const mockChainId = Number(process.env.NEXT_PUBLIC_ARC_CHAIN_ID || ARC_TESTNET.chainId);
+const mockChainId = ARC_TESTNET.chainId;
 
 export const mockInvoices: Invoice[] = [
   {
