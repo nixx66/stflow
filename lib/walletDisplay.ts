@@ -40,13 +40,11 @@ export async function copyWalletAddressIfCurrent(
 }
 
 export function getMerchantWalletDisplay({
-  connectedWallet,
-  livePayment
+  connectedWallet
 }: {
   connectedWallet?: string | null;
-  livePayment: boolean;
 }) {
-  if (livePayment && !connectedWallet) {
+  if (!connectedWallet) {
     return {
       badge: "Connect wallet required",
       detail: "No merchant wallet connected",
@@ -54,17 +52,9 @@ export function getMerchantWalletDisplay({
     };
   }
 
-  if (connectedWallet) {
-    return {
-      badge: "Connected wallet",
-      detail: shortenWalletAddress(connectedWallet),
-      isConnected: true
-    };
-  }
-
   return {
-      badge: "Wallet required",
-      detail: "Connect a wallet to use Arc Testnet",
-    isConnected: false
+    badge: "Connected wallet",
+    detail: shortenWalletAddress(connectedWallet),
+    isConnected: true
   };
 }

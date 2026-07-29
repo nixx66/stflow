@@ -30,8 +30,8 @@ test("describes network readiness for mock-first payment flow", () => {
   assert.equal(getWalletNetworkLabel(undefined, 5042002), "Network not connected");
 });
 
-test("does not present demo merchant wallet as connected in live mode", () => {
-  assert.deepEqual(getMerchantWalletDisplay({ livePayment: true }), {
+test("requires a connected merchant wallet", () => {
+  assert.deepEqual(getMerchantWalletDisplay({}), {
     badge: "Connect wallet required",
     detail: "No merchant wallet connected",
     isConnected: false
@@ -41,7 +41,6 @@ test("does not present demo merchant wallet as connected in live mode", () => {
 test("shows the connected merchant wallet only after wallet connection", () => {
   assert.deepEqual(
     getMerchantWalletDisplay({
-      livePayment: true,
       connectedWallet: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"
     }),
     {

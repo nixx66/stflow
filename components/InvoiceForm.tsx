@@ -45,8 +45,7 @@ export function InvoiceForm() {
   const { createInvoice, configError, retryMetadata, state } = useCreateInvoice();
   const { address: connectedMerchantWallet } = useAccount();
   const merchantWalletDisplay = getMerchantWalletDisplay({
-    connectedWallet: connectedMerchantWallet,
-    livePayment: true
+    connectedWallet: connectedMerchantWallet
   });
   const [createdInvoice, setCreatedInvoice] = useState<Invoice>();
   const [metadataPending, setMetadataPending] = useState(false);
