@@ -2,7 +2,10 @@
 pragma solidity ^0.8.30;
 
 import {STFlowInvoiceRegistry} from "../src/STFlowInvoiceRegistry.sol";
+import {CallbackUSDC} from "../src/test/CallbackUSDC.sol";
 import {MockUSDC} from "../src/test/MockUSDC.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 interface Vm {
     function prank(address msgSender) external;
@@ -11,6 +14,7 @@ interface Vm {
     function warp(uint256 newTimestamp) external;
     function expectRevert() external;
     function expectRevert(bytes4 revertData) external;
+    function expectRevert(bytes calldata revertData) external;
     function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter) external;
 }
 
@@ -57,9 +61,11 @@ contract STFlowInvoiceRegistryTest {
         uint64 dueAt = uint64(block.timestamp + 1 days);
 
         vm.prank(MERCHANT);
-        registry.createInvoice(ID, PAYER, AMOUNT, dueAt, METADATA_HASH);
+        bytes32 id = registry.createInvoice(ID, PAYER, AMOUNT, dueAt, METADATA_HASH);
 
-        STFlowInvoiceRegistry.Invoice memory invoice = registry.getInvoice(ID);
+        STFlowInvoiceRegistry.Invoice memory invoice = registry.getInvoice(id);
+        assert(id == registry.invoiceId(MERCHANT, ID));
+        assert(invoice.id == id);
         assert(invoice.merchant == MERCHANT);
         assert(invoice.payer == PAYER);
         assert(invoice.amount == AMOUNT);
@@ -74,7 +80,7 @@ contract STFlowInvoiceRegistryTest {
         uint64 dueAt = uint64(block.timestamp + 1 days);
 
         vm.expectEmit(true, true, true, true, address(registry));
-        emit InvoiceCreated(ID, MERCHANT, PAYER, AMOUNT, dueAt, METADATA_HASH);
+        emit InvoiceCreated(_invoiceId(), MERCHANT, PAYER, AMOUNT, dueAt, METADATA_HASH);
         vm.prank(MERCHANT);
         registry.createInvoice(ID, PAYER, AMOUNT, dueAt, METADATA_HASH);
     }
@@ -87,6 +93,69 @@ contract STFlowInvoiceRegistryTest {
         vm.expectRevert(STFlowInvoiceRegistry.InvoiceAlreadyExists.selector);
         registry.createInvoice(ID, PAYER, AMOUNT, dueAt, METADATA_HASH);
         vm.stopPrank();
+    }
+
+    function testSameReferenceIsIsolatedAcrossMerchants() public {
+        uint64 dueAt = uint64(block.timestamp + 1 days);
+
+        vm.prank(MERCHANT);
+        bytes32 merchantId = registry.createInvoice(ID, PAYER, AMOUNT, dueAt, METADATA_HASH);
+        vm.prank(OTHER);
+        bytes32 otherId = registry.createInvoice(ID, PAYER, AMOUNT, dueAt, METADATA_HASH);
+
+        assert(merchantId != otherId);
+        assert(registry.getInvoice(merchantId).merchant == MERCHANT);
+        assert(registry.getInvoice(otherId).merchant == OTHER);
+    }
+
+    function testIndexesInvoicesForMerchantAndPayer() public {
+        _createInvoice();
+
+        assert(registry.invoiceCount(MERCHANT) == 1);
+        assert(registry.invoiceCount(PAYER) == 1);
+        bytes32[] memory merchantIds = registry.getInvoiceIds(MERCHANT, 0, 10);
+        bytes32[] memory payerIds = registry.getInvoiceIds(PAYER, 0, 10);
+        assert(merchantIds.length == 1 && merchantIds[0] == _invoiceId());
+        assert(payerIds.length == 1 && payerIds[0] == _invoiceId());
+    }
+
+    function testInvoiceIndexesAreWalletScoped() public {
+        _createInvoice();
+        bytes32 otherReference = bytes32(uint256(99));
+        vm.prank(OTHER);
+        bytes32 otherId =
+            registry.createInvoice(otherReference, MERCHANT, AMOUNT, uint64(block.timestamp + 1 days), METADATA_HASH);
+
+        bytes32[] memory payerIds = registry.getInvoiceIds(PAYER, 0, 10);
+        bytes32[] memory otherIds = registry.getInvoiceIds(OTHER, 0, 10);
+        assert(payerIds.length == 1 && payerIds[0] == _invoiceId());
+        assert(otherIds.length == 1 && otherIds[0] == otherId);
+    }
+
+    function testPaginatesInvoiceIdsAndReturnsEmptyPastEnd() public {
+        for (uint256 i; i < 3; ++i) {
+            vm.prank(MERCHANT);
+            registry.createInvoice(bytes32(i + 10), PAYER, AMOUNT, uint64(block.timestamp + 1 days), METADATA_HASH);
+        }
+
+        bytes32[] memory page = registry.getInvoiceIds(MERCHANT, 1, 2);
+        assert(page.length == 2);
+        assert(page[0] == registry.invoiceId(MERCHANT, bytes32(uint256(11))));
+        assert(page[1] == registry.invoiceId(MERCHANT, bytes32(uint256(12))));
+        assert(registry.getInvoiceIds(MERCHANT, 0, 0).length == 0);
+        assert(registry.getInvoiceIds(MERCHANT, 3, 2).length == 0);
+        assert(registry.getInvoiceIds(MERCHANT, 100, 2).length == 0);
+    }
+
+    function testCapsInvoiceIdPageSizeAtOneHundred() public {
+        for (uint256 i; i < 101; ++i) {
+            vm.prank(MERCHANT);
+            registry.createInvoice(bytes32(i + 1_000), PAYER, AMOUNT, uint64(block.timestamp + 1 days), METADATA_HASH);
+        }
+
+        bytes32[] memory page = registry.getInvoiceIds(MERCHANT, 0, 101);
+        assert(page.length == 100);
+        assert(page[99] == registry.invoiceId(MERCHANT, bytes32(uint256(1_099))));
     }
 
     function testRejectsZeroPayer() public {
@@ -123,9 +192,9 @@ contract STFlowInvoiceRegistryTest {
         _fundAndApprovePayer();
 
         vm.prank(PAYER);
-        registry.payInvoice(ID);
+        registry.payInvoice(_invoiceId());
 
-        STFlowInvoiceRegistry.Invoice memory invoice = registry.getInvoice(ID);
+        STFlowInvoiceRegistry.Invoice memory invoice = registry.getInvoice(_invoiceId());
         assert(usdc.balanceOf(MERCHANT) == AMOUNT);
         assert(usdc.balanceOf(PAYER) == 0);
         assert(usdc.balanceOf(address(registry)) == 0);
@@ -134,10 +203,17 @@ contract STFlowInvoiceRegistryTest {
 
     function testRejectsOtherPayer() public {
         _createInvoice();
+        uint256 merchantBalance = usdc.balanceOf(MERCHANT);
 
         vm.prank(OTHER);
         vm.expectRevert(STFlowInvoiceRegistry.UnauthorizedPayer.selector);
-        registry.payInvoice(ID);
+        registry.payInvoice(_invoiceId());
+
+        STFlowInvoiceRegistry.Invoice memory invoice = registry.getInvoice(_invoiceId());
+        assert(uint8(invoice.status) == uint8(STFlowInvoiceRegistry.Status.Pending));
+        assert(invoice.paidAt == 0);
+        assert(usdc.balanceOf(MERCHANT) == merchantBalance);
+        assert(usdc.balanceOf(address(registry)) == 0);
     }
 
     function testRejectsMerchantAttemptingPayment() public {
@@ -145,13 +221,13 @@ contract STFlowInvoiceRegistryTest {
 
         vm.prank(MERCHANT);
         vm.expectRevert(STFlowInvoiceRegistry.UnauthorizedPayer.selector);
-        registry.payInvoice(ID);
+        registry.payInvoice(_invoiceId());
     }
 
     function testRejectsPaymentForMissingInvoice() public {
         vm.prank(PAYER);
         vm.expectRevert(STFlowInvoiceRegistry.InvoiceNotFound.selector);
-        registry.payInvoice(ID);
+        registry.payInvoice(_invoiceId());
     }
 
     function testRejectsCancellationForMissingInvoice() public {
@@ -167,7 +243,14 @@ contract STFlowInvoiceRegistryTest {
 
         vm.prank(PAYER);
         vm.expectRevert(STFlowInvoiceRegistry.InvoiceExpired.selector);
-        registry.payInvoice(ID);
+        registry.payInvoice(_invoiceId());
+
+        STFlowInvoiceRegistry.Invoice memory invoice = registry.getInvoice(_invoiceId());
+        assert(uint8(invoice.status) == uint8(STFlowInvoiceRegistry.Status.Pending));
+        assert(invoice.paidAt == 0);
+        assert(usdc.balanceOf(MERCHANT) == 0);
+        assert(usdc.balanceOf(PAYER) == AMOUNT);
+        assert(usdc.balanceOf(address(registry)) == 0);
     }
 
     function testPaymentRecordsPaidAtTimestamp() public {
@@ -177,9 +260,9 @@ contract STFlowInvoiceRegistryTest {
         vm.warp(paidAt);
 
         vm.prank(PAYER);
-        registry.payInvoice(ID);
+        registry.payInvoice(_invoiceId());
 
-        assert(registry.getInvoice(ID).paidAt == paidAt);
+        assert(registry.getInvoice(_invoiceId()).paidAt == paidAt);
     }
 
     function testRejectsDuplicatePayment() public {
@@ -187,9 +270,9 @@ contract STFlowInvoiceRegistryTest {
         _fundAndApprovePayer();
 
         vm.startPrank(PAYER);
-        registry.payInvoice(ID);
+        registry.payInvoice(_invoiceId());
         vm.expectRevert(STFlowInvoiceRegistry.InvoiceNotPending.selector);
-        registry.payInvoice(ID);
+        registry.payInvoice(_invoiceId());
         vm.stopPrank();
     }
 
@@ -198,18 +281,18 @@ contract STFlowInvoiceRegistryTest {
         _fundAndApprovePayer();
 
         vm.expectEmit(true, true, true, true, address(registry));
-        emit InvoicePaid(ID, PAYER, MERCHANT, AMOUNT);
+        emit InvoicePaid(_invoiceId(), PAYER, MERCHANT, AMOUNT);
         vm.prank(PAYER);
-        registry.payInvoice(ID);
+        registry.payInvoice(_invoiceId());
     }
 
     function testMerchantCancelsInvoice() public {
         _createInvoice();
 
         vm.prank(MERCHANT);
-        registry.cancelInvoice(ID);
+        registry.cancelInvoice(_invoiceId());
 
-        STFlowInvoiceRegistry.Invoice memory invoice = registry.getInvoice(ID);
+        STFlowInvoiceRegistry.Invoice memory invoice = registry.getInvoice(_invoiceId());
         assert(uint8(invoice.status) == uint8(STFlowInvoiceRegistry.Status.Cancelled));
         assert(invoice.paidAt == 0);
     }
@@ -219,16 +302,16 @@ contract STFlowInvoiceRegistryTest {
 
         vm.prank(PAYER);
         vm.expectRevert(STFlowInvoiceRegistry.UnauthorizedMerchant.selector);
-        registry.cancelInvoice(ID);
+        registry.cancelInvoice(_invoiceId());
     }
 
     function testRejectsDuplicateCancellation() public {
         _createInvoice();
 
         vm.startPrank(MERCHANT);
-        registry.cancelInvoice(ID);
+        registry.cancelInvoice(_invoiceId());
         vm.expectRevert(STFlowInvoiceRegistry.InvoiceNotPending.selector);
-        registry.cancelInvoice(ID);
+        registry.cancelInvoice(_invoiceId());
         vm.stopPrank();
     }
 
@@ -236,20 +319,20 @@ contract STFlowInvoiceRegistryTest {
         _createInvoice();
         _fundAndApprovePayer();
         vm.prank(MERCHANT);
-        registry.cancelInvoice(ID);
+        registry.cancelInvoice(_invoiceId());
 
         vm.prank(PAYER);
         vm.expectRevert(STFlowInvoiceRegistry.InvoiceNotPending.selector);
-        registry.payInvoice(ID);
+        registry.payInvoice(_invoiceId());
     }
 
     function testCancelInvoiceEmitsExactEvent() public {
         _createInvoice();
 
         vm.expectEmit(true, true, false, true, address(registry));
-        emit InvoiceCancelled(ID, MERCHANT);
+        emit InvoiceCancelled(_invoiceId(), MERCHANT);
         vm.prank(MERCHANT);
-        registry.cancelInvoice(ID);
+        registry.cancelInvoice(_invoiceId());
     }
 
     function testInsufficientAllowanceRollsBackPayment() public {
@@ -259,10 +342,14 @@ contract STFlowInvoiceRegistryTest {
         usdc.approve(address(registry), AMOUNT - 1);
 
         vm.prank(PAYER);
-        vm.expectRevert();
-        registry.payInvoice(ID);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientAllowance.selector, address(registry), AMOUNT - 1, AMOUNT
+            )
+        );
+        registry.payInvoice(_invoiceId());
 
-        STFlowInvoiceRegistry.Invoice memory invoice = registry.getInvoice(ID);
+        STFlowInvoiceRegistry.Invoice memory invoice = registry.getInvoice(_invoiceId());
         assert(uint8(invoice.status) == uint8(STFlowInvoiceRegistry.Status.Pending));
         assert(invoice.paidAt == 0);
         assert(usdc.balanceOf(MERCHANT) == 0);
@@ -276,10 +363,12 @@ contract STFlowInvoiceRegistryTest {
         usdc.approve(address(registry), AMOUNT);
 
         vm.prank(PAYER);
-        vm.expectRevert();
-        registry.payInvoice(ID);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, PAYER, AMOUNT - 1, AMOUNT)
+        );
+        registry.payInvoice(_invoiceId());
 
-        STFlowInvoiceRegistry.Invoice memory invoice = registry.getInvoice(ID);
+        STFlowInvoiceRegistry.Invoice memory invoice = registry.getInvoice(_invoiceId());
         assert(uint8(invoice.status) == uint8(STFlowInvoiceRegistry.Status.Pending));
         assert(invoice.paidAt == 0);
         assert(usdc.balanceOf(MERCHANT) == 0);
@@ -296,5 +385,52 @@ contract STFlowInvoiceRegistryTest {
         usdc.mint(PAYER, AMOUNT);
         vm.prank(PAYER);
         usdc.approve(address(registry), AMOUNT);
+    }
+
+    function _invoiceId() private pure returns (bytes32) {
+        return keccak256(abi.encode(MERCHANT, ID));
+    }
+}
+
+contract STFlowInvoiceRegistryReentrancyTest {
+    Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    bytes32 private constant REFERENCE_ID = bytes32(uint256(7));
+    address private constant MERCHANT = address(0xA11CE);
+    address private constant PAYER = address(0xB0B);
+    uint128 private constant AMOUNT = 50_000000;
+
+    CallbackUSDC private usdc;
+    STFlowInvoiceRegistry private registry;
+
+    event InvoicePaid(bytes32 indexed id, address indexed payer, address indexed merchant, uint128 amount);
+
+    function setUp() public {
+        usdc = new CallbackUSDC();
+        registry = new STFlowInvoiceRegistry(address(usdc));
+    }
+
+    function testBlocksNestedPaymentWhileOuterPaymentSucceedsOnce() public {
+        vm.prank(MERCHANT);
+        bytes32 id =
+            registry.createInvoice(REFERENCE_ID, PAYER, AMOUNT, uint64(block.timestamp + 1 days), bytes32(uint256(8)));
+        usdc.mint(PAYER, AMOUNT);
+        vm.prank(PAYER);
+        usdc.approve(address(registry), AMOUNT);
+        usdc.arm(address(registry), id);
+
+        vm.expectEmit(true, true, true, true, address(registry));
+        emit InvoicePaid(id, PAYER, MERCHANT, AMOUNT);
+        vm.prank(PAYER);
+        registry.payInvoice(id);
+
+        STFlowInvoiceRegistry.Invoice memory invoice = registry.getInvoice(id);
+        assert(usdc.callbackCount() == 1);
+        assert(usdc.transferCount() == 1);
+        assert(usdc.callbackError() == ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
+        assert(uint8(invoice.status) == uint8(STFlowInvoiceRegistry.Status.Paid));
+        assert(usdc.balanceOf(MERCHANT) == AMOUNT);
+        assert(usdc.balanceOf(PAYER) == 0);
+        assert(usdc.balanceOf(address(registry)) == 0);
     }
 }

@@ -15,6 +15,7 @@ contract STFlowInvoiceRegistry is ReentrancyGuard {
     }
 
     struct Invoice {
+        bytes32 id;
         address merchant;
         address payer;
         uint128 amount;
@@ -39,6 +40,7 @@ contract STFlowInvoiceRegistry is ReentrancyGuard {
     IERC20 public immutable usdc;
 
     mapping(bytes32 id => Invoice invoice) private invoices;
+    mapping(address wallet => bytes32[] ids) private invoiceIds;
 
     event InvoiceCreated(
         bytes32 indexed id,
@@ -57,13 +59,18 @@ contract STFlowInvoiceRegistry is ReentrancyGuard {
         usdc = IERC20(usdcAddress);
     }
 
-    function createInvoice(bytes32 id, address payer, uint128 amount, uint64 dueAt, bytes32 metadataHash) external {
+    function createInvoice(bytes32 referenceId, address payer, uint128 amount, uint64 dueAt, bytes32 metadataHash)
+        external
+        returns (bytes32 id)
+    {
+        id = invoiceId(msg.sender, referenceId);
         if (invoices[id].merchant != address(0)) revert InvoiceAlreadyExists();
         if (payer == address(0) || payer == msg.sender) revert InvalidPayer();
         if (amount == 0) revert InvalidAmount();
         if (dueAt <= block.timestamp) revert InvalidDeadline();
 
         invoices[id] = Invoice({
+            id: id,
             merchant: msg.sender,
             payer: payer,
             amount: amount,
@@ -73,8 +80,32 @@ contract STFlowInvoiceRegistry is ReentrancyGuard {
             metadataHash: metadataHash,
             status: Status.Pending
         });
+        invoiceIds[msg.sender].push(id);
+        invoiceIds[payer].push(id);
 
         emit InvoiceCreated(id, msg.sender, payer, amount, dueAt, metadataHash);
+    }
+
+    function invoiceId(address merchant, bytes32 referenceId) public pure returns (bytes32) {
+        return keccak256(abi.encode(merchant, referenceId));
+    }
+
+    function invoiceCount(address wallet) external view returns (uint256) {
+        return invoiceIds[wallet].length;
+    }
+
+    function getInvoiceIds(address wallet, uint256 offset, uint256 limit) external view returns (bytes32[] memory ids) {
+        bytes32[] storage storedIds = invoiceIds[wallet];
+        if (offset >= storedIds.length || limit == 0) return new bytes32[](0);
+
+        uint256 size = limit > 100 ? 100 : limit;
+        uint256 remaining = storedIds.length - offset;
+        if (size > remaining) size = remaining;
+
+        ids = new bytes32[](size);
+        for (uint256 i; i < size; ++i) {
+            ids[i] = storedIds[offset + i];
+        }
     }
 
     function payInvoice(bytes32 id) external nonReentrant {
