@@ -113,7 +113,7 @@ function EmptyQueue({ label }: { label: string }) {
 
 export default function ConsoleOverviewPage() {
   const { address } = useAccount();
-  const { invoices, isReady } = useInvoices();
+  const { invoices, isReady, error, refresh } = useInvoices();
   const walletScope = useMemo(() => getConsoleWalletScope(address), [address]);
   const { payables, receivables, summary } = useMemo(
     () => getConsoleInvoiceData(invoices, walletScope.wallet),
@@ -136,7 +136,7 @@ export default function ConsoleOverviewPage() {
               Invoice command center
             </h2>
             <p className="mt-2 font-mono text-sm font-bold text-muted">
-              {walletScope.isDemo ? `Demo wallet ${shortenAddress(walletScope.wallet, 8)}` : shortenAddress(walletScope.wallet, 8)}
+              {walletScope.wallet ? shortenAddress(walletScope.wallet, 8) : "Wallet not connected"}
             </p>
           </div>
           <div className="grid w-full gap-2 sm:grid-cols-3 xl:max-w-xl">
@@ -179,14 +179,20 @@ export default function ConsoleOverviewPage() {
             value={formatCurrency(totalExposure)}
           />
         </div>
-        {walletScope.isDemo ? (
-          <p className="mt-5 rounded-2xl border border-arc-100 bg-arc-50 px-4 py-3 text-sm font-bold text-arc-800">
-            Demo ledger is active. Connect a wallet to switch this console to wallet-scoped live data.
+        {!walletScope.wallet ? (
+          <p className="mt-5 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900">
+            Connect a wallet to load its Arc Testnet invoice ledger.
           </p>
         ) : null}
-        {!walletScope.isDemo && !isReady ? (
+        {walletScope.wallet && !isReady ? (
           <p className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-muted">
-            Loading local invoice ledger...
+            Loading Arc Testnet invoice ledger...
+          </p>
+        ) : null}
+        {error ? (
+          <p className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">
+            {error}{" "}
+            <button className="underline" onClick={() => void refresh()} type="button">Retry</button>
           </p>
         ) : null}
       </section>

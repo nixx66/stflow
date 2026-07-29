@@ -14,7 +14,7 @@ export function CTASection() {
 
         <div className="rounded-[2.5rem] border border-white/10 bg-white/[0.08] p-6 backdrop-blur">
           <p className="text-xl font-semibold leading-8 text-white/72">
-            Use the mock flow now, keep the interface ready for real settlement later.
+            Connect a wallet to create and settle invoices on Arc Testnet.
           </p>
           <div className="mt-8 grid gap-3">
             <Link

@@ -22,7 +22,7 @@ const resources = [
     copy: "A one-page STFlow overview for partners, judges, community members, and potential users."
   },
   {
-    title: "Demo script",
+    title: "Product walkthrough",
     icon: Presentation,
     copy: "A step-by-step walkthrough from invoice creation to payment link, receipt, and dashboard record."
   },
@@ -39,7 +39,7 @@ const resources = [
   {
     title: "FAQ starter",
     icon: HelpCircle,
-    copy: "Mock vs live payment, USDC settlement, transaction proof, merchant setup, and payer questions."
+    copy: "Arc Testnet payment, USDC settlement, transaction proof, merchant setup, and payer questions."
   },
   {
     title: "Compliance notes",
@@ -104,7 +104,7 @@ const stackGroups = [
         copy: "The settlement validation layer for low-cost testing of USDC payments, transaction records, and future proof fields."
       },
       {
-        name: "Mock-first to live-ready",
+        name: "Arc Testnet settlement",
         copy: "Start with a complete local workflow, then connect real USDC payments, transaction hashes, explorer links, and proof data when the product path is stable."
       }
     ]
@@ -115,7 +115,7 @@ const flowSteps = [
   "Create Invoice",
   "Generate Payment Link",
   "Open Pay Page",
-  "Mock USDC Payment",
+  "Approve USDC",
   "Generate Receipt",
   "Dashboard Record"
 ] as const;
@@ -214,7 +214,7 @@ export default function ResourcesPage() {
               Start with the product loop, then connect live settlement.
             </h2>
             <p className="mt-6 text-lg font-semibold leading-8 text-muted">
-              The mock stage validates the full local flow first, so the experience can be refined before chain complexity is introduced. The live stage can then add real USDC payment, transaction hashes, explorer links, memo fields, and proof data without changing the product path.
+              STFlow records invoice authority and settlement state in the Arc Testnet registry. Descriptive metadata is returned only when it matches the hash committed onchain.
             </p>
           </div>
 
@@ -244,7 +244,7 @@ export default function ResourcesPage() {
               Shareable Materials
             </p>
             <h2 className="mt-4 text-4xl font-black leading-tight tracking-tight text-[#063f2c] sm:text-6xl">
-              Project kit for demo, pitch, and launch.
+              Project kit for product walkthroughs, pitch, and launch.
             </h2>
           </div>
 

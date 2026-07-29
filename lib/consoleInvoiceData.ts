@@ -1,5 +1,4 @@
 import type { Invoice } from "../types/invoice.ts";
-import { MOCK_MERCHANT_A } from "./mockData.ts";
 
 function normalizeWallet(wallet?: string | null) {
   const trimmedWallet = wallet?.trim();
@@ -7,11 +6,8 @@ function normalizeWallet(wallet?: string | null) {
 }
 
 export function getConsoleWalletScope(wallet?: string | null) {
-  const scopedWallet = wallet?.trim() || MOCK_MERCHANT_A;
-
   return {
-    wallet: scopedWallet,
-    isDemo: !normalizeWallet(wallet)
+    wallet: wallet?.trim()
   };
 }
 

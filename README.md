@@ -58,34 +58,31 @@ RPC, explorer, and USDC address are pinned in reviewed source and cannot be
 overridden through environment variables. Missing or invalid server
 configuration fails closed when a server database utility is invoked.
 
-## Arc Framework Notes
-
-See [docs/STFlow-Arc-Framework.md](docs/STFlow-Arc-Framework.md) for the build plan:
-
-- mock invoice workflow first
-- wallet connection second
-- real Arc USDC transfer third
-- Memo-based audit trail fourth
-- Supabase/indexer-backed dashboard later
-
 ## Current Product Surface
 
 - Product homepage with invoice-to-receipt settlement story.
 - Wise-style Create Invoice payment request form.
 - Payment link and assigned-payer Arc Testnet USDC checkout flow.
 - Formal receipt view with proof fields.
-- Settlement dashboard with stats, invoices, and transaction history.
-- V2 merchant console for invoices, customers, orders, analytics, export, and settings.
+- Settlement dashboard with connected-wallet Arc Testnet invoices.
+- Merchant console backed by the same verified chain records.
 
 ## Integration Status
 
-- Contract writes and payment authorization use Arc Testnet.
-- The Supabase schema and strict server-only client are present. The metadata
-  API route still needs to be switched from its legacy store before production
-  cutover; confirmed onchain creation remains recoverable if metadata saving
-  fails.
-- Dashboard and seeded presentation data are not authoritative settlement
-  records until the planned chain/Supabase synchronization is complete.
+- Invoice creation, payment authorization, status, amounts, participants, and
+  deadlines come from the Arc Testnet registry.
+- Descriptive invoice metadata is stored through the signed `/api/v1` routes
+  and accepted by clients only when its hash matches the contract record.
+- `/dashboard`, `/console`, and `/console/invoices` enumerate the connected
+  wallet directly from the registry in pages of at most 100 records. They show
+  explicit disconnected, configuration, RPC, and metadata-service states.
+- `/pay/[invoiceId]` and `/receipt/[invoiceId]` accept only canonical onchain
+  `bytes32` invoice IDs. Payment links do not embed invoice snapshots.
+- There is no browser ledger, seeded invoice set, simulated settlement,
+  generated transaction hash, or unauthenticated legacy invoice write API.
+- A usable environment requires a deployed registry address, Supabase schema
+  and server credentials, and a WalletConnect project ID. Missing services fail
+  closed instead of returning sample records.
 - Keep wallet private keys and recovery phrases out of source, environment
   variables, logs, and support messages.
 

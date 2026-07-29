@@ -11,7 +11,7 @@ import { formatCurrency, shortenAddress } from "@/lib/format";
 
 export default function ConsoleInvoicesPage() {
   const { address } = useAccount();
-  const { invoices, isReady } = useInvoices();
+  const { invoices, isReady, error, refresh } = useInvoices();
   const walletScope = useMemo(() => getConsoleWalletScope(address), [address]);
   const { payables, receivables, summary } = useMemo(
     () => getConsoleInvoiceData(invoices, walletScope.wallet),
@@ -27,7 +27,7 @@ export default function ConsoleInvoicesPage() {
             Live invoice ledger for the connected wallet.
           </h2>
           <p className="mt-5 max-w-3xl text-lg font-semibold leading-8 text-muted">
-            This workspace now reads the same invoice records used by the create, pay, receipt, and dashboard flows. Counts update from your local STFlow ledger instead of fixed demo data.
+            This workspace reads contract state from Arc Testnet and verifies descriptive metadata against its onchain hash.
           </p>
           <div className="mt-7 grid gap-3 sm:grid-cols-4">
             <div className="rounded-2xl bg-slate-50 p-4">
@@ -47,14 +47,19 @@ export default function ConsoleInvoicesPage() {
               <p className="mt-1 text-sm font-bold text-muted">Received</p>
             </div>
           </div>
-          {walletScope.isDemo ? (
-            <p className="mt-5 rounded-2xl border border-arc-100 bg-arc-50 px-4 py-3 text-sm font-bold text-arc-800">
-              Demo ledger is active. Connect a wallet to switch this console to wallet-scoped live data.
+          {!walletScope.wallet ? (
+            <p className="mt-5 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900">
+              Connect a wallet to load its Arc Testnet invoices.
             </p>
           ) : null}
-          {!walletScope.isDemo && !isReady ? (
+          {walletScope.wallet && !isReady ? (
             <p className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-muted">
-              Loading local invoice ledger...
+              Loading Arc Testnet invoice ledger...
+            </p>
+          ) : null}
+          {error ? (
+            <p className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">
+              {error}{" "}<button className="underline" onClick={() => void refresh()} type="button">Retry</button>
             </p>
           ) : null}
         </div>
@@ -73,8 +78,8 @@ export default function ConsoleInvoicesPage() {
                 ArrowUpRight
               ],
               [
-                "Live local ledger",
-                "The console reads the same local API-backed invoice records that payment links and receipts use.",
+                "Verified chain ledger",
+                "The console reads Arc Testnet contract state and hash-verified metadata.",
                 WalletCards
               ]
             ].map(([title, body, Icon]) => (
@@ -97,7 +102,7 @@ export default function ConsoleInvoicesPage() {
       <DataPanel
         eyebrow="Receivables"
         title="Invoices you issued for other wallets to pay"
-        action={<span className="font-mono text-xs font-bold text-muted">{shortenAddress(walletScope.wallet, 6)}</span>}
+        action={<span className="font-mono text-xs font-bold text-muted">{walletScope.wallet ? shortenAddress(walletScope.wallet, 6) : "Not connected"}</span>}
       >
         <InvoiceRows invoices={receivables} role="receivable" />
       </DataPanel>

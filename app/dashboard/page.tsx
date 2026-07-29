@@ -7,14 +7,13 @@ import { InvoiceCard } from "@/components/InvoiceCard";
 import { Navbar } from "@/components/Navbar";
 import { TransactionTable } from "@/components/TransactionTable";
 import { formatCurrency, shortenAddress } from "@/lib/format";
-import { getPaymentModeLabel } from "@/lib/paymentMode";
 import { buildSharedInvoicePayPath } from "@/lib/sharedInvoiceLink";
 import { useDashboard } from "@/hooks/useDashboard";
 
 const loadingStatLabels = ["Total Received", "Paid Invoices", "Pending Invoices", "Total Volume"] as const;
 
 export default function DashboardPage() {
-  const { address, incomingInvoices, invoices, isReady, livePayment, paymentMode, stats } = useDashboard();
+  const { address, error, incomingInvoices, invoices, isConnected, isReady, refresh, stats } = useDashboard();
   const recentTransactions = invoices.filter((invoice) => invoice.status === "paid");
 
   return (
@@ -26,13 +25,13 @@ export default function DashboardPage() {
             <p className="text-sm font-semibold text-arc-600">Settlement Dashboard</p>
             <h1 className="mt-2 text-3xl font-bold text-ink">USDC transaction operations</h1>
             <p className="mt-2 text-sm text-muted">
-              Demo merchant account: {shortenAddress(address, 6)}
+              {address ? `Connected wallet: ${shortenAddress(address, 6)}` : "Connect a wallet to load Arc Testnet invoices."}
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row">
             <span className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm">
               <Landmark className="h-4 w-4 text-arc-600" />
-              {getPaymentModeLabel(paymentMode)}
+              Arc Testnet registry
             </span>
             <Link
               className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-arc-600 px-4 text-sm font-semibold text-white shadow-soft transition hover:bg-arc-500"
@@ -44,6 +43,19 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {error ? (
+          <div className="mb-6 flex items-center justify-between gap-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">
+            <span>{error}</span>
+            <button className="shrink-0 underline" onClick={() => void refresh()} type="button">
+              Retry
+            </button>
+          </div>
+        ) : null}
+        {!isConnected ? (
+          <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+            Wallet connection is required. No invoice totals are shown until Arc Testnet data can be read.
+          </div>
+        ) : null}
         {isReady ? (
           <DashboardStats stats={stats} />
         ) : (
@@ -123,7 +135,7 @@ export default function DashboardPage() {
             <div>
               <h2 className="text-xl font-bold text-ink">Invoices</h2>
               <p className="mt-1 text-sm text-muted">
-                Records are scoped to the {livePayment ? "connected merchant wallet" : "demo merchant account"}.
+                Records are read from the Arc Testnet registry for the connected wallet.
               </p>
             </div>
           </div>
@@ -143,10 +155,10 @@ export default function DashboardPage() {
           <div className="mb-4">
             <h2 className="text-xl font-bold text-ink">Recent Transactions</h2>
             <p className="mt-1 text-sm text-muted">
-              Paid invoice records with shortened {livePayment ? "live" : "mock"} transaction hashes.
+              Paid invoice records confirmed by the Arc Testnet registry.
             </p>
           </div>
-          <TransactionTable invoices={recentTransactions.length ? recentTransactions : invoices} />
+          <TransactionTable invoices={recentTransactions} />
         </section>
       </section>
     </main>

@@ -63,8 +63,8 @@ export function getMerchantWalletDisplay({
   }
 
   return {
-    badge: "Demo wallet",
-    detail: "Demo merchant wallet",
+      badge: "Wallet required",
+      detail: "Connect a wallet to use Arc Testnet",
     isConnected: false
   };
 }

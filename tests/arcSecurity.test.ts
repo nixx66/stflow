@@ -18,17 +18,16 @@ test("pins payment security constants to Arc Testnet", () => {
 });
 
 test("security constants cannot be overridden by public environment variables", async () => {
-  const [arc, chains, usdc, invoice, mockData, v2MockData, env] = await Promise.all([
+  const [arc, chains, usdc, invoice, onchainInvoices, env] = await Promise.all([
     readFile("lib/arc.ts", "utf8"),
     readFile("lib/chains.ts", "utf8"),
     readFile("lib/usdc.ts", "utf8"),
     readFile("lib/invoice.ts", "utf8"),
-    readFile("lib/mockData.ts", "utf8"),
-    readFile("lib/v2MockData.ts", "utf8"),
+    readFile("lib/onchainInvoices.ts", "utf8"),
     readFile(".env.example", "utf8")
   ]);
 
-  for (const source of [arc, chains, usdc, invoice, mockData, v2MockData]) {
+  for (const source of [arc, chains, usdc, invoice, onchainInvoices]) {
     assert.doesNotMatch(
       source,
       /NEXT_PUBLIC_ARC_CHAIN_ID|NEXT_PUBLIC_ARC_RPC_URL|NEXT_PUBLIC_ARC_EXPLORER_URL|NEXT_PUBLIC_USDC_ADDRESS/

@@ -4,7 +4,7 @@ import { WalletStatusCard } from "@/components/wallet/WalletStatusCard";
 const settings = [
   ["Wallet connection", "Merchant wallet and payer wallet connection remain enabled through the V1 wallet layer."],
   ["Network", "Keep the testnet as the default build path before live settlement is wired."],
-  ["USDC payment mode", "Mock payment is active. Real transfer mode can be added after wallet and chain checks are stable."],
+  ["USDC settlement", "Payments use the configured invoice registry and USDC contract on Arc Testnet."],
   ["Invoice status", "Draft, pending, paid, and closed are available as V2 operating states."],
   ["Memo and note", "Internal memo fields are ready for reconciliation and future memo proof data."],
   ["PDF receipt", "Receipt data is structured. Server-side PDF generation is reserved for the next implementation step."]

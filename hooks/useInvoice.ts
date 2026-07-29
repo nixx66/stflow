@@ -1,129 +1,99 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  CreateInvoiceInput,
-  createMockInvoice,
-  getInvoiceById,
-  getStoredInvoices,
-  mergeInvoicesById,
-  saveStoredInvoices
-} from "@/lib/invoice";
-import {
-  fetchInvoiceFromServer,
-  fetchInvoicesFromServer,
-  syncInvoiceToServer
-} from "@/lib/invoiceServerClient";
-import { decodeSharedInvoice } from "@/lib/sharedInvoiceLink";
-import { Invoice } from "@/types/invoice";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPublicClient, getAddress, http, type Hex } from "viem";
+import { useAccount } from "wagmi";
+import { arcTestnet } from "@/lib/chains";
+import { hashInvoiceMetadata, type InvoiceMetadata } from "@/lib/invoiceMetadata";
+import { fetchWalletInvoices } from "@/lib/onchainInvoices";
+import type { ChainInvoice } from "@/lib/paymentTransaction";
+import type { Invoice } from "@/types/invoice";
 
-function saveInvoice(invoice: Invoice) {
-  const storedInvoices = getStoredInvoices();
-  saveStoredInvoices([invoice, ...storedInvoices.filter((item) => item.id !== invoice.id)]);
+const client = createPublicClient({ chain: arcTestnet, transport: http() });
+
+async function metadata(id: Hex) {
+  const response = await fetch(`/api/v1/invoices/${id}`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(
+      response.status === 404
+        ? `Verified metadata is unavailable for invoice ${id}.`
+        : "Invoice metadata service is unavailable."
+    );
+  }
+  const payload = (await response.json()) as {
+    metadata?: InvoiceMetadata;
+    metadataHash?: Hex;
+  };
+  if (!payload.metadata || payload.metadataHash !== hashInvoiceMetadata(payload.metadata)) {
+    throw new Error(`Invoice ${id} metadata response is invalid.`);
+  }
+  return payload.metadata;
 }
 
 export function useInvoices() {
+  const { address, isConnected } = useAccount();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [isReady, setIsReady] = useState(false);
+  const [error, setError] = useState<string>();
+  const generation = useRef(0);
 
-  useEffect(() => {
-    let active = true;
+  const refresh = useCallback(async () => {
+    const request = ++generation.current;
+    setError(undefined);
 
-    const refresh = () => {
-      try {
-        const storedInvoices = getStoredInvoices();
-        if (active) {
-          setInvoices(storedInvoices);
-        }
-        storedInvoices.forEach((invoice) => {
-          void syncInvoiceToServer(invoice);
-        });
-      } finally {
-        if (active) {
-          setIsReady(true);
-        }
-      }
-    };
-
-    const loadServerInvoices = async () => {
-      const serverInvoices = await fetchInvoicesFromServer();
-      if (!active || serverInvoices.length === 0) return;
-
-      setInvoices((current) => mergeInvoicesById(serverInvoices, current));
+    if (!isConnected || !address) {
+      setInvoices([]);
       setIsReady(true);
-    };
+      return;
+    }
 
-    refresh();
-    void loadServerInvoices();
-    window.addEventListener("storage", refresh);
-    window.addEventListener("stflow:invoices", refresh);
-
-    return () => {
-      active = false;
-      window.removeEventListener("storage", refresh);
-      window.removeEventListener("stflow:invoices", refresh);
-    };
-  }, []);
-
-  const createInvoice = (input: CreateInvoiceInput) => {
-    const invoice = createMockInvoice(input);
-    void syncInvoiceToServer(invoice);
-    setInvoices(getStoredInvoices());
-    setIsReady(true);
-    return invoice;
-  };
-
-  return { invoices, createInvoice, isReady };
-}
-
-export function useInvoice(invoiceId: string, sharedInvoicePayload?: string | null) {
-  const { invoices, isReady } = useInvoices();
-  const [remoteInvoice, setRemoteInvoice] = useState<Invoice | null>(null);
-  const [isFetchingRemote, setIsFetchingRemote] = useState(false);
-  const sharedInvoice = useMemo(
-    () => decodeSharedInvoice(sharedInvoicePayload, invoiceId),
-    [invoiceId, sharedInvoicePayload]
-  );
-
-  useEffect(() => {
-    if (!isReady || !sharedInvoice) return;
-    if (invoices.some((item) => item.id === sharedInvoice.id)) return;
-
-    saveInvoice(sharedInvoice);
-  }, [invoices, isReady, sharedInvoice]);
-
-  const localInvoice = useMemo(() => {
-    return invoices.find((item) => item.id === invoiceId) ?? getInvoiceById(invoiceId) ?? sharedInvoice ?? undefined;
-  }, [invoiceId, invoices, sharedInvoice]);
-
-  useEffect(() => {
-    if (!isReady || localInvoice) return;
-
-    let active = true;
-    setIsFetchingRemote(true);
-
-    fetchInvoiceFromServer(invoiceId)
-      .then((invoice) => {
-        if (!active) return;
-        setRemoteInvoice(invoice);
-
-        if (invoice) {
-          saveInvoice(invoice);
-        }
-      })
-      .catch(() => {
-        if (active) setRemoteInvoice(null);
-      })
-      .finally(() => {
-        if (active) setIsFetchingRemote(false);
+    setIsReady(false);
+    try {
+      const { INVOICE_REGISTRY_ADDRESS, invoiceRegistryAbi } = await import(
+        "@/lib/contracts/invoiceRegistry"
+      );
+      const wallet = getAddress(address);
+      const result = await fetchWalletInvoices(wallet, {
+        count: () =>
+          client.readContract({
+            address: INVOICE_REGISTRY_ADDRESS,
+            abi: invoiceRegistryAbi,
+            functionName: "invoiceCount",
+            args: [wallet]
+          }),
+        page: (_wallet, offset, limit) =>
+          client.readContract({
+            address: INVOICE_REGISTRY_ADDRESS,
+            abi: invoiceRegistryAbi,
+            functionName: "getInvoiceIds",
+            args: [wallet, offset, limit]
+          }),
+        invoice: (id) =>
+          client.readContract({
+            address: INVOICE_REGISTRY_ADDRESS,
+            abi: invoiceRegistryAbi,
+            functionName: "getInvoice",
+            args: [id]
+          }) as Promise<ChainInvoice>,
+        metadata
       });
+      if (request === generation.current) setInvoices(result);
+    } catch (cause) {
+      if (request === generation.current) {
+        setInvoices([]);
+        setError(cause instanceof Error ? cause.message : "Unable to load Arc invoices.");
+      }
+    } finally {
+      if (request === generation.current) setIsReady(true);
+    }
+  }, [address, isConnected]);
 
+  useEffect(() => {
+    void refresh();
     return () => {
-      active = false;
+      generation.current++;
     };
-  }, [invoiceId, isReady, localInvoice]);
+  }, [refresh]);
 
-  const invoice = localInvoice ?? remoteInvoice ?? undefined;
-
-  return { invoice, isReady: isReady && !isFetchingRemote };
+  return { invoices, isReady, error, refresh };
 }

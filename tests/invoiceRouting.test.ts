@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  filterInvoicesByPayer,
-  mergeInvoicesById
+  filterInvoicesByPayer
 } from "../lib/invoice.ts";
 import type { Invoice } from "../types/invoice.ts";
 
@@ -32,16 +31,5 @@ test("filters invoices assigned to the connected payer wallet", () => {
 
   assert.deepEqual(filterInvoicesByPayer([incomingInvoice, otherInvoice], payerWallet), [
     incomingInvoice
-  ]);
-});
-
-test("merges server invoices ahead of local duplicates", () => {
-  const serverInvoice = makeInvoice("af-shared", { amount: "50" });
-  const localInvoice = makeInvoice("af-shared", { amount: "25" });
-  const localOnlyInvoice = makeInvoice("af-local");
-
-  assert.deepEqual(mergeInvoicesById([serverInvoice], [localInvoice, localOnlyInvoice]), [
-    serverInvoice,
-    localOnlyInvoice
   ]);
 });

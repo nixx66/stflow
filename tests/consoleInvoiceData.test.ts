@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { getConsoleInvoiceData, getConsoleWalletScope } from "../lib/consoleInvoiceData.ts";
-import { MOCK_MERCHANT_A } from "../lib/mockData.ts";
 import type { Invoice } from "../types/invoice.ts";
 
 const walletA = "0x000000000000000000000000000000000000000A";
@@ -55,9 +54,8 @@ test("returns empty live console data when no wallet is connected", () => {
   assert.deepEqual(data.payables, []);
 });
 
-test("falls back to the shared demo wallet when console has no connected wallet", () => {
+test("does not invent a wallet scope when no wallet is connected", () => {
   const scope = getConsoleWalletScope();
 
-  assert.equal(scope.wallet, MOCK_MERCHANT_A);
-  assert.equal(scope.isDemo, true);
+  assert.equal(scope.wallet, undefined);
 });

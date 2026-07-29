@@ -41,7 +41,7 @@ export function getInvoiceCreateReadiness(input: InvoiceCreateReadinessInput): I
     {
       id: "expiry",
       label: "Payment window",
-      detail: "Expiry is optional in mock mode, but recommended for real collection.",
+        detail: "A future payment deadline is required by the Arc Testnet registry.",
       ready: Boolean(input.expiresAt)
     }
   ];
