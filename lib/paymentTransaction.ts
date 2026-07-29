@@ -128,6 +128,21 @@ export function isCurrentInvoiceLoad(
   );
 }
 
+export function selectInvoiceScope<T extends { invoiceId?: Hex }>(
+  currentInvoiceId: string,
+  scoped: T | undefined
+) {
+  if (!scoped?.invoiceId) return undefined;
+  try {
+    return normalizeInvoiceId(currentInvoiceId) ===
+      normalizeInvoiceId(scoped.invoiceId)
+      ? scoped
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function validatePaymentSnapshot(
   invoice: ChainInvoice,
   payer: Address,
@@ -233,16 +248,48 @@ export async function findVerifiedPaymentHash(
   registry: Address,
   expected: PaidEvent
 ) {
+  const proof = await resolvePaymentProof(hashes, getReceipt, registry, expected);
+  return proof.status === "verified" ? proof.txHash : undefined;
+}
+
+export async function resolvePaymentProof(
+  hashes: readonly Hex[],
+  getReceipt: (hash: Hex) => Promise<PaymentReceipt>,
+  registry: Address,
+  expected: PaidEvent
+) {
   const valid: Hex[] = [];
+  let rpcFailed = false;
   for (const hash of new Set(hashes)) {
+    let receipt: PaymentReceipt;
     try {
-      validateInvoicePaid(await getReceipt(hash), registry, expected);
+      receipt = await getReceipt(hash);
+    } catch {
+      rpcFailed = true;
+      continue;
+    }
+    try {
+      validateInvoicePaid(receipt, registry, expected);
       valid.push(hash);
     } catch {
-      // A candidate hash is not proof unless its complete receipt matches.
+      // A decoded event mismatch is not payment proof.
     }
   }
-  return valid.length === 1 ? valid[0] : undefined;
+  if (valid.length === 1 && !rpcFailed) {
+    return { status: "verified" as const, txHash: valid[0] };
+  }
+  if (valid.length > 1) {
+    return {
+      status: "error" as const,
+      error: "Payment proof is ambiguous. Retry shortly."
+    };
+  }
+  return {
+    status: "error" as const,
+    error: rpcFailed
+      ? "Payment proof could not be verified. Retry shortly."
+      : "Payment proof is not available yet. Retry shortly."
+  };
 }
 
 export function validateInvoicePaid(

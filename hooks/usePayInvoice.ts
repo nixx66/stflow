@@ -26,13 +26,14 @@ import { hashInvoiceMetadata, type InvoiceMetadata } from "@/lib/invoiceMetadata
 import {
   beginPayment,
   classifyMetadataResponse,
-  findVerifiedPaymentHash,
   formatUsdc,
   getPaymentPlan,
   invoicePaidEvent,
   isCurrentInvoiceLoad,
   normalizeInvoiceId,
   reducePaymentState,
+  resolvePaymentProof,
+  selectInvoiceScope,
   validateConfirmedPayment,
   validateInvoicePaid,
   validatePaymentSnapshot,
@@ -45,6 +46,11 @@ import { USDC_ADDRESS, usdcAbi } from "@/lib/usdc";
 
 const initialState: PaymentState = { stage: "idle" };
 const arcClient = createPublicClient({ chain: arcTestnet, transport: http() });
+
+export type PaymentProof =
+  | { invoiceId: Hex; status: "idle" | "loading" }
+  | { invoiceId: Hex; status: "verified"; txHash: Hex }
+  | { invoiceId: Hex; status: "error"; error: string };
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : "Unable to pay this invoice.";
@@ -88,7 +94,11 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
   const [metadata, setMetadata] = useState<Metadata>();
   const [loadError, setLoadError] = useState<string>();
   const [isLoading, setIsLoading] = useState(true);
-  const [knownPaymentHash, setKnownPaymentHash] = useState<Hex>();
+  const [loadedInvoiceId, setLoadedInvoiceId] = useState<Hex>();
+  const [metadataInvoiceId, setMetadataInvoiceId] = useState<Hex>();
+  const [loadErrorInvoiceId, setLoadErrorInvoiceId] = useState<Hex>();
+  const [loadingInvoiceId, setLoadingInvoiceId] = useState<Hex>();
+  const [proof, setProof] = useState<PaymentProof>();
   const activeRequest = useRef<Hex | undefined>(undefined);
   const loadGeneration = useRef(0);
   const invoiceKey = useRef<Hex | undefined>(undefined);
@@ -106,7 +116,7 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
     } catch (error) {
       setInvoice(undefined);
       setMetadata(undefined);
-      setKnownPaymentHash(undefined);
+      setProof(undefined);
       setLoadError(message(error));
       setIsLoading(false);
       return;
@@ -117,8 +127,10 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
       isCurrentInvoiceLoad(token, invoiceKey.current ?? id, loadGeneration.current);
 
     setIsLoading(true);
+    setLoadingInvoiceId(id);
     setLoadError(undefined);
-    setKnownPaymentHash(undefined);
+    setLoadErrorInvoiceId(undefined);
+    setProof({ invoiceId: id, status: "idle" });
 
     try {
       const { INVOICE_REGISTRY_ADDRESS, invoiceRegistryAbi } = await import(
@@ -137,17 +149,24 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
 
       if (!current()) return;
       setInvoice(chainInvoice);
+      setLoadedInvoiceId(id);
       try {
         const verified = await getVerifiedMetadata(id, chainInvoice.metadataHash);
-        if (current()) setMetadata(verified);
+        if (current()) {
+          setMetadata(verified);
+          setMetadataInvoiceId(id);
+        }
       } catch (error) {
         if (current()) {
           setMetadata(undefined);
+          setMetadataInvoiceId(id);
           setLoadError(message(error));
+          setLoadErrorInvoiceId(id);
         }
       }
 
       if (chainInvoice.status === 1 && current()) {
+        setProof({ invoiceId: id, status: "loading" });
         try {
           const hashes = receiptHash
             ? [receiptHash]
@@ -160,7 +179,7 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
                   toBlock: "latest"
                 })
               ).map((log) => log.transactionHash);
-          const verifiedHash = await findVerifiedPaymentHash(
+          const result = await resolvePaymentProof(
             hashes,
             (hash) => arcClient.getTransactionReceipt({ hash }),
             INVOICE_REGISTRY_ADDRESS,
@@ -171,9 +190,15 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
               amount: chainInvoice.amount
             }
           );
-          if (current()) setKnownPaymentHash(verifiedHash);
+          if (current()) setProof({ invoiceId: id, ...result });
         } catch {
-          if (current()) setKnownPaymentHash(undefined);
+          if (current()) {
+            setProof({
+              invoiceId: id,
+              status: "error",
+              error: "Payment proof could not be verified. Retry shortly."
+            });
+          }
         }
       }
     } catch (error) {
@@ -181,6 +206,8 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
         setInvoice(undefined);
         setMetadata(undefined);
         setLoadError(message(error));
+        setLoadErrorInvoiceId(id);
+        setProof(undefined);
       }
     } finally {
       if (current()) setIsLoading(false);
@@ -196,9 +223,12 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
       invoiceKey.current = undefined;
     }
     setInvoice(undefined);
+    setLoadedInvoiceId(undefined);
     setMetadata(undefined);
-    setKnownPaymentHash(undefined);
+    setMetadataInvoiceId(undefined);
+    setProof(undefined);
     setLoadError(undefined);
+    setLoadErrorInvoiceId(undefined);
     void load();
   }, [load]);
 
@@ -387,7 +417,12 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
       const stale = invoiceKey.current !== id;
       if (!stale) {
         setInvoice(confirmed);
-        setKnownPaymentHash(paymentTxHash);
+        setLoadedInvoiceId(id);
+        setProof({
+          invoiceId: id,
+          status: "verified",
+          txHash: paymentTxHash
+        });
       }
       dispatch({ type: "payment_confirmed", requestId: paymentRequest });
       return { invoice: confirmed, txHash: paymentTxHash, stale };
@@ -401,15 +436,52 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
     }
   }, [address, config, invoiceId, isConnected]);
 
+  const currentId = (() => {
+    try {
+      return parseInvoiceId(invoiceId);
+    } catch {
+      return undefined;
+    }
+  })();
+  const scopedInvoice =
+    currentId && loadedInvoiceId
+      ? selectInvoiceScope(currentId, { invoiceId: loadedInvoiceId, value: invoice })
+      : undefined;
+  const scopedMetadata =
+    currentId && metadataInvoiceId
+      ? selectInvoiceScope(currentId, {
+          invoiceId: metadataInvoiceId,
+          value: metadata
+        })
+      : undefined;
+  const scopedError =
+    currentId && loadErrorInvoiceId
+      ? selectInvoiceScope(currentId, {
+          invoiceId: loadErrorInvoiceId,
+          value: loadError
+        })
+      : undefined;
+  const scopedProof = currentId ? selectInvoiceScope(currentId, proof) : undefined;
+  const scopedState = currentId ? selectInvoiceScope(currentId, state) : undefined;
+  const loadingMatches =
+    currentId &&
+    loadingInvoiceId &&
+    selectInvoiceScope(currentId, { invoiceId: loadingInvoiceId });
+
   return {
     pay,
     refresh: load,
-    state,
-    invoice,
-    metadata,
-    isLoading,
-    loadError,
-    paymentTxHash: state.paymentTxHash ?? knownPaymentHash,
+    state: scopedState ?? { stage: "idle" as const, invoiceId: currentId },
+    invoice: scopedInvoice?.value,
+    metadata: scopedMetadata?.value,
+    isLoading: loadingMatches ? isLoading : true,
+    loadError: scopedError?.value,
+    proof: scopedProof ?? {
+      invoiceId: currentId,
+      status: "idle" as const
+    },
+    paymentTxHash:
+      scopedProof?.status === "verified" ? scopedProof.txHash : undefined,
     payerConnected: isConnected,
     connectedAddress: address
   };

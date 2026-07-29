@@ -19,6 +19,8 @@ import {
   isCurrentInvoiceLoad,
   normalizeInvoiceId,
   reducePaymentState,
+  resolvePaymentProof,
+  selectInvoiceScope,
   validateRegistryUsdc,
   validateConfirmedPayment,
   validateInvoicePaid,
@@ -263,14 +265,14 @@ test("resets payment state when the normalized invoice id changes", () => {
 
 test("accepts a historical hash only after full receipt validation", async () => {
   const validReceipt = { status: "success" as const, logs: [paidLog()] };
-  assert.equal(
-    await findVerifiedPaymentHash(
+  assert.deepEqual(
+    await resolvePaymentProof(
       [PAYMENT_HASH],
       async () => validReceipt,
       REGISTRY,
       { id: ID, payer: PAYER, merchant: MERCHANT, amount: invoice.amount }
     ),
-    PAYMENT_HASH
+    { status: "verified", txHash: PAYMENT_HASH }
   );
   assert.equal(
     await findVerifiedPaymentHash(
@@ -290,6 +292,48 @@ test("accepts a historical hash only after full receipt validation", async () =>
     ),
     undefined
   );
+});
+
+test("returns retryable proof errors for missing, ambiguous, and unavailable receipts", async () => {
+  const expectedPayment = {
+    id: ID,
+    payer: PAYER,
+    merchant: MERCHANT,
+    amount: invoice.amount
+  };
+  const validReceipt = { status: "success" as const, logs: [paidLog()] };
+
+  assert.deepEqual(
+    await resolvePaymentProof([], async () => validReceipt, REGISTRY, expectedPayment),
+    { status: "error", error: "Payment proof is not available yet. Retry shortly." }
+  );
+  assert.deepEqual(
+    await resolvePaymentProof(
+      [PAYMENT_HASH, APPROVAL_HASH],
+      async () => validReceipt,
+      REGISTRY,
+      expectedPayment
+    ),
+    { status: "error", error: "Payment proof is ambiguous. Retry shortly." }
+  );
+  assert.deepEqual(
+    await resolvePaymentProof(
+      [PAYMENT_HASH],
+      async () => {
+        throw new Error("RPC unavailable");
+      },
+      REGISTRY,
+      expectedPayment
+    ),
+    { status: "error", error: "Payment proof could not be verified. Retry shortly." }
+  );
+});
+
+test("selects scoped state synchronously only for the current invoice id", () => {
+  const scoped = { invoiceId: ID, value: PAYMENT_HASH };
+  assert.equal(selectInvoiceScope(ID.toUpperCase(), scoped), scoped);
+  assert.equal(selectInvoiceScope(`0x${"ab".repeat(32)}`, scoped), undefined);
+  assert.equal(selectInvoiceScope("not-an-id", scoped), undefined);
 });
 
 test("preserves broadcast hashes through confirmation and later wallet changes", () => {
@@ -328,7 +372,11 @@ test("preserves broadcast hashes through confirmation and later wallet changes",
 });
 
 test("payment hook contains no mock settlement or direct transfer path", async () => {
-  const hook = await readFile("hooks/usePayInvoice.ts", "utf8");
+  const [hook, payPage, receiptPage] = await Promise.all([
+    readFile("hooks/usePayInvoice.ts", "utf8"),
+    readFile("app/pay/[invoiceId]/page.tsx", "utf8"),
+    readFile("app/receipt/[invoiceId]/page.tsx", "utf8")
+  ]);
   assert.match(hook, /getInvoice/);
   assert.match(hook, /functionName:\s*"usdc"/);
   assert.match(hook, /allowance/);
@@ -338,4 +386,8 @@ test("payment hook contains no mock settlement or direct transfer path", async (
   assert.doesNotMatch(hook, /createMockTxHash|markInvoicePaid|payMockInvoice/);
   assert.doesNotMatch(hook, /functionName:\s*"transfer"/);
   assert.doesNotMatch(hook, /syncInvoiceToServer|localStorage/);
+  assert.match(hook, /resolvePaymentProof/);
+  assert.match(payPage, /key=\{params\.invoiceId\.toLowerCase\(\)\}/);
+  assert.match(receiptPage, /proofReady[\s\S]*<ReceiptCard/);
+  assert.match(receiptPage, /key=\{params\.invoiceId\.toLowerCase\(\)\}/);
 });

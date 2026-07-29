@@ -11,7 +11,10 @@ export default function PayInvoicePage() {
     <main>
       <Navbar />
       <section className="mx-auto max-w-[1680px] px-3 py-10 sm:px-4 lg:px-6 2xl:px-8">
-        <PaymentPanel invoiceId={params.invoiceId} />
+        <PaymentPanel
+          invoiceId={params.invoiceId}
+          key={params.invoiceId.toLowerCase()}
+        />
       </section>
     </main>
   );
