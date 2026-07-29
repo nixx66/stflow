@@ -104,11 +104,9 @@ service-role key in browser code, Git, screenshots, issue trackers, or chat. If
 a key is exposed, rotate it immediately in Supabase, replace it in every server
 environment, and redeploy.
 
-The current `.env.example` still contains `NEXT_PUBLIC_SUPABASE_URL` and
-`NEXT_PUBLIC_SUPABASE_ANON_KEY` from the legacy client-side path. They do not
-indicate production readiness and must not be populated for this migration.
-The strict runtime configuration task will remove them when the server-only
-client is introduced.
+The example environment uses only the server-side variables above. The
+application validates them when a server database operation starts; importing
+the module alone does not read secrets or create a client.
 
 Use separate Supabase projects and keys for local/test and production
 environments. The target production routes must fail closed when either
@@ -126,8 +124,9 @@ USDC: 0x3600000000000000000000000000000000000000
 Explorer: https://testnet.arcscan.app
 ```
 
-Keep the RPC URL and chain ID in reviewed server source unless operations
-require an override. The deployed invoice registry address is environment
+The RPC URL, chain ID, explorer, and USDC address are pinned in reviewed source
+and cannot be overridden through the environment. The deployed invoice
+registry address is environment
 specific and must be set after deployment:
 
 ```text

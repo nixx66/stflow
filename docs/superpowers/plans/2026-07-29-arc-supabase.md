@@ -95,13 +95,13 @@ assert.throws(
   () => getServerRuntimeConfig({}),
   /SUPABASE_URL/
 );
-assert.throws(
+assert.doesNotThrow(
   () => getServerRuntimeConfig({
     SUPABASE_URL: "https://project.supabase.co",
-    SUPABASE_SERVICE_ROLE_KEY: "service-role",
-    NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS: REGISTRY
-  }),
-  /ARC_RPC_URL/
+    SUPABASE_SERVICE_ROLE_KEY: "sb_secret_example-service-role-key",
+    NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS: REGISTRY,
+    ARC_RPC_URL: "https://ignored.example"
+  })
 );
 ```
 
@@ -113,7 +113,7 @@ Expected: module import fails.
 
 - [ ] **Step 3: Implement strict configuration**
 
-Validate URL and EVM address formats and return an immutable config object. Throw a named `RuntimeConfigError` listing only missing variable names; never log secret values.
+Validate URL, service-key shape, and EVM address formats and return an immutable config object. Arc chain ID, RPC, explorer, and USDC remain fixed source constants. Throw a named `RuntimeConfigError` listing only missing or invalid variable names; never log secret values.
 
 - [ ] **Step 4: Create the server client**
 

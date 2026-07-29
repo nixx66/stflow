@@ -198,7 +198,7 @@ git commit -m "docs: record verified Arc registry deployment"
 
 - [ ] **Step 1: Create and migrate Supabase**
 
-The user creates the project, runs the committed migration, and confirms RLS. Store `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ARC_RPC_URL`, `CRON_SECRET`, and `NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS` in Vercel project settings. Only the registry address may use `NEXT_PUBLIC_`.
+The user creates the project, runs the committed migration, and confirms RLS. Store `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, and `NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS` in Vercel project settings. Only the registry address may use `NEXT_PUBLIC_`; Arc RPC and contract constants remain pinned in source.
 
 - [ ] **Step 2: Run the configuration health check**
 
