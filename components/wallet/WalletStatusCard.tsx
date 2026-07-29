@@ -17,8 +17,8 @@ export function WalletStatusCard({ audience }: WalletStatusCardProps) {
   const title = audience === "merchant" ? "Merchant wallet" : "Payer wallet";
   const description =
     audience === "merchant"
-      ? "Used later as the receiving wallet for real USDC settlement."
-      : "Used later to authorize the USDC payment from the checkout page.";
+      ? "Creates invoices and receives contract-authorized Arc Testnet USDC settlement."
+      : "Must match the assigned payer before approving and settling Arc Testnet USDC.";
 
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-card">

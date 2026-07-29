@@ -7,7 +7,15 @@ export class RepositoryAuthError extends Error {}
 export class RepositoryConflictError extends Error {}
 export class RepositoryError extends Error {}
 
-export function getInvoiceMetadataRepository(): MetadataRepository {
+type BatchMetadataRepository = MetadataRepository & {
+  findMany(identity: {
+    chainId: number;
+    registry: string;
+    invoiceIds: string[];
+  }): Promise<Record<string, unknown>[]>;
+};
+
+export function getInvoiceMetadataRepository(): BatchMetadataRepository {
   const db = getSupabaseAdmin();
   return {
     async persistAtomic({ wallet, nonceHash, row }) {
@@ -55,6 +63,17 @@ export function getInvoiceMetadataRepository(): MetadataRepository {
         .maybeSingle();
       if (error) throw new RepositoryError("Metadata database unavailable.");
       return data as unknown as Record<string, unknown> | null;
+    },
+
+    async findMany(identity: { chainId: number; registry: string; invoiceIds: string[] }) {
+      const { data, error } = await db
+        .from("invoice_metadata")
+        .select("invoice_id,customer_name,title,description,memo,metadata_hash")
+        .eq("chain_id", identity.chainId)
+        .eq("registry_address", identity.registry)
+        .in("invoice_id", identity.invoiceIds);
+      if (error) throw new RepositoryError("Metadata database unavailable.");
+      return (data ?? []) as unknown as Record<string, unknown>[];
     }
   };
 }

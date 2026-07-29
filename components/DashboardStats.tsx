@@ -5,10 +5,10 @@ export function DashboardStats({
   stats
 }: {
   stats: {
-    totalReceived: number;
+    totalReceived: bigint;
     paidInvoices: number;
     pendingInvoices: number;
-    totalVolume: number;
+    totalVolume: bigint;
   };
 }) {
   const items = [

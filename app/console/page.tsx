@@ -67,7 +67,7 @@ function InvoiceMiniRow({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate font-mono text-sm font-black text-ink">{invoice.id}</p>
-          <p className="mt-1 truncate text-sm font-black text-ink">{invoice.title}</p>
+          <p className="mt-1 truncate text-sm font-black text-ink">{invoice.title ?? "Metadata unavailable"}</p>
           <p className="mt-1 text-xs font-bold text-muted">{counterparty}</p>
         </div>
         <StatusBadge status={invoice.status} />
@@ -113,7 +113,7 @@ function EmptyQueue({ label }: { label: string }) {
 
 export default function ConsoleOverviewPage() {
   const { address } = useAccount();
-  const { invoices, isReady, error, refresh } = useInvoices();
+  const { invoices, status, error, refresh } = useInvoices();
   const walletScope = useMemo(() => getConsoleWalletScope(address), [address]);
   const { payables, receivables, summary } = useMemo(
     () => getConsoleInvoiceData(invoices, walletScope.wallet),
@@ -126,6 +126,29 @@ export default function ConsoleOverviewPage() {
   const pendingPayables = sortNewestFirst(payables.filter((invoice) => invoice.status === "pending"));
   const latestEvents = sortNewestFirst([...receivables, ...payables]).slice(0, 6);
   const totalExposure = summary.pendingReceivableAmount + summary.pendingPayableAmount;
+  if (status !== "ready" && status !== "partial") {
+    const message =
+      status === "disconnected"
+        ? "Connect a wallet to load its Arc Testnet invoice ledger."
+        : status === "loading"
+          ? "Loading Arc Testnet invoice ledger..."
+          : error ?? "Unable to load the Arc Testnet invoice ledger.";
+    return (
+      <section
+        aria-live={status === "error" ? "assertive" : "polite"}
+        className={`rounded-[2rem] border p-6 shadow-card ${
+          status === "error" ? "border-red-200 bg-red-50 text-red-900" : "border-slate-200 bg-white text-ink"
+        }`}
+        role={status === "error" ? "alert" : "status"}
+      >
+        <h2 className="text-2xl font-black">Invoice command center</h2>
+        <p className="mt-3 text-sm font-bold">{message}</p>
+        {status === "error" ? (
+          <button className="mt-4 underline" onClick={() => void refresh()} type="button">Retry</button>
+        ) : null}
+      </section>
+    );
+  }
   return (
     <div className="space-y-5">
       <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-card">
@@ -179,20 +202,9 @@ export default function ConsoleOverviewPage() {
             value={formatCurrency(totalExposure)}
           />
         </div>
-        {!walletScope.wallet ? (
-          <p className="mt-5 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900">
-            Connect a wallet to load its Arc Testnet invoice ledger.
-          </p>
-        ) : null}
-        {walletScope.wallet && !isReady ? (
-          <p className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-muted">
-            Loading Arc Testnet invoice ledger...
-          </p>
-        ) : null}
-        {error ? (
-          <p className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">
-            {error}{" "}
-            <button className="underline" onClick={() => void refresh()} type="button">Retry</button>
+        {status === "partial" ? (
+          <p aria-live="polite" className="mt-5 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900" role="status">
+            Chain fields are current. Some invoice descriptions could not be verified.
           </p>
         ) : null}
       </section>

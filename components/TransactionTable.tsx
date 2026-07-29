@@ -28,7 +28,7 @@ export function TransactionTable({ invoices }: { invoices: Invoice[] }) {
             {invoices.map((invoice) => (
               <tr className="hover:bg-slate-50" key={invoice.id}>
                 <td className="whitespace-nowrap px-4 py-4 font-medium text-ink">{invoice.id}</td>
-                <td className="min-w-52 px-4 py-4 text-slate-700">{invoice.title}</td>
+                <td className="min-w-52 px-4 py-4 text-slate-700">{invoice.title ?? "Metadata unavailable"}</td>
                 <td className="whitespace-nowrap px-4 py-4 font-semibold text-ink">
                   {formatCurrency(invoice.amount)}
                 </td>

@@ -61,7 +61,7 @@ export function InvoiceRows({
               <tr className="align-top" key={invoice.id}>
                 <td className="py-4 pr-4">
                   <p className="font-black text-ink">{invoice.id}</p>
-                  <p className="mt-1 text-sm font-semibold text-muted">{invoice.title}</p>
+              <p className="mt-1 text-sm font-semibold text-muted">{invoice.title ?? "Metadata unavailable"}</p>
                   <p className="mt-1 text-xs font-bold text-slate-400">{formatDate(invoice.createdAt)}</p>
                 </td>
                 <td className="py-4 pr-4">

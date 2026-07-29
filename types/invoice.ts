@@ -6,7 +6,7 @@ export type Invoice = {
   customerName?: string;
   customerWallet?: string;
   payerWallet?: string;
-  title: string;
+  title?: string;
   description?: string;
   memo?: string;
   amount: string;
@@ -18,6 +18,7 @@ export type Invoice = {
   createdAt: string;
   paidAt?: string;
   expiresAt?: string;
+  metadataState?: "verified" | "missing" | "invalid" | "error";
 };
 
 export type Receipt = {

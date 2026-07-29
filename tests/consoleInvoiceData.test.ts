@@ -38,7 +38,7 @@ test("builds console data from invoices for the connected merchant wallet", () =
   assert.equal(data.summary.totalInvoices, 3);
   assert.equal(data.summary.receivableCount, 2);
   assert.equal(data.summary.payableCount, 1);
-  assert.equal(data.summary.totalReceived, 250);
+  assert.equal(data.summary.totalReceived, 250_000_000n);
   assert.deepEqual(data.receivables.map((invoice) => invoice.id), [
     "af-receivable-paid",
     "af-receivable-pending"

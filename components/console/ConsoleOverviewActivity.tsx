@@ -9,9 +9,9 @@ type ConsoleOverviewActivityProps = {
   latestEvents: Invoice[];
   receivables: Invoice[];
   summary: {
-    pendingPayableAmount: number;
-    pendingReceivableAmount: number;
-    totalReceived: number;
+    pendingPayableAmount: bigint;
+    pendingReceivableAmount: bigint;
+    totalReceived: bigint;
   };
 };
 
@@ -49,12 +49,6 @@ export function ConsoleOverviewActivity({ latestEvents, receivables, summary }: 
       >
         <div className="space-y-4">
           {cashflowRows.map(({ label, amount, detail, color, Icon }) => {
-            const denominator = Math.max(
-              summary.totalReceived + summary.pendingReceivableAmount + summary.pendingPayableAmount,
-              1
-            );
-            const width = `${Math.max((amount / denominator) * 100, amount ? 10 : 2)}%`;
-
             return (
               <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4" key={label}>
                 <div className="flex items-start justify-between gap-4">
@@ -70,7 +64,7 @@ export function ConsoleOverviewActivity({ latestEvents, receivables, summary }: 
                   <p className="font-mono text-sm font-black text-ink">{formatCurrency(amount)}</p>
                 </div>
                 <div className="mt-4 h-2 overflow-hidden rounded-full bg-white">
-                  <div className={`h-full rounded-full ${color}`} style={{ width }} />
+                  <div className={`h-full rounded-full ${color}`} style={{ width: amount > 0n ? "100%" : "0%" }} />
                 </div>
               </div>
             );
@@ -91,7 +85,7 @@ export function ConsoleOverviewActivity({ latestEvents, receivables, summary }: 
                       {isReceivable ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
                     </span>
                     <div>
-                      <p className="font-black text-ink">{invoice.title}</p>
+                      <p className="font-black text-ink">{invoice.title ?? "Metadata unavailable"}</p>
                       <p className="mt-1 text-sm font-semibold text-muted">
                         {isReceivable ? "Issued receivable" : "Received payable"} / {formatDate(invoice.createdAt)}
                       </p>

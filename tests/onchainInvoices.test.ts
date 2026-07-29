@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   fetchWalletInvoices,
   mapChainInvoice,
+  metadataBatches,
   walletInvoiceIds
 } from "../lib/onchainInvoices.ts";
 import { hashInvoiceMetadata } from "../lib/invoiceMetadata.ts";
@@ -53,6 +54,158 @@ test("chain status is authoritative and pending expiry is derived", () => {
   assert.equal(invoice.status, "expired");
   assert.equal(invoice.amount, "12.5");
   assert.equal(invoice.title, "Consulting");
+});
+
+test("unknown contract status fails closed", () => {
+  assert.throws(
+    () =>
+      mapChainInvoice(
+        {
+          id,
+          merchant: wallet,
+          payer: "0x0000000000000000000000000000000000000002",
+          amount: 1n,
+          createdAt: 100n,
+          dueAt: 200n,
+          paidAt: 0n,
+          metadataHash: hashInvoiceMetadata(metadata),
+          status: 3
+        },
+        metadata,
+        150n
+      ),
+    /unknown invoice status/i
+  );
+});
+
+test("wallet count over the operational cap fails before pagination", async () => {
+  let paged = false;
+  await assert.rejects(
+    walletInvoiceIds(wallet, {
+      count: async () => 1001n,
+      page: async () => {
+        paged = true;
+        return [];
+      }
+    }),
+    /exceeds.*1000/i
+  );
+  assert.equal(paged, false);
+});
+
+test("metadata ids are batched at 100", () => {
+  const ids = Array.from({ length: 205 }, (_, index) => {
+    return `0x${(index + 1).toString(16).padStart(64, "0")}` as Hex;
+  });
+  assert.deepEqual(metadataBatches(ids).map((batch) => batch.length), [100, 100, 5]);
+});
+
+test("abort stops workers from scheduling remaining invoice reads", async () => {
+  const controller = new AbortController();
+  let reads = 0;
+  const ids = Array.from({ length: 20 }, (_, index) => {
+    return `0x${(index + 1).toString(16).padStart(64, "0")}` as Hex;
+  });
+  await assert.rejects(
+    fetchWalletInvoices(
+      wallet,
+      {
+        count: async () => 20n,
+        page: async () => ids,
+        invoice: async (invoiceId) => {
+          reads++;
+          controller.abort();
+          return {
+            id: invoiceId,
+            merchant: wallet,
+            payer: "0x0000000000000000000000000000000000000002",
+            amount: 1n,
+            createdAt: 100n,
+            dueAt: 200n,
+            paidAt: 0n,
+            metadataHash: hashInvoiceMetadata(metadata),
+            status: 0
+          };
+        },
+        metadataBatch: async () => new Map()
+      },
+      controller.signal
+    ),
+    /abort/i
+  );
+  assert.ok(reads <= 5);
+});
+
+test("missing metadata retains chain fields as a partial invoice", async () => {
+  const [invoice] = await fetchWalletInvoices(wallet, {
+    count: async () => 1n,
+    page: async () => [id],
+    invoice: async () => ({
+      id,
+      merchant: wallet,
+      payer: "0x0000000000000000000000000000000000000002",
+      amount: 2_000_000n,
+      createdAt: 100n,
+      dueAt: 200n,
+      paidAt: 0n,
+      metadataHash: hashInvoiceMetadata(metadata),
+      status: 0
+    }),
+    metadataBatch: async () => new Map()
+  });
+  assert.equal(invoice.amount, "2");
+  assert.equal(invoice.title, undefined);
+  assert.equal(invoice.metadataState, "missing");
+});
+
+test("invalid metadata affects only its invoice", async () => {
+  const second = `0x${"2".repeat(64)}` as Hex;
+  const invoices = await fetchWalletInvoices(wallet, {
+    count: async () => 2n,
+    page: async () => [id, second],
+    invoice: async (invoiceId) => ({
+      id: invoiceId,
+      merchant: wallet,
+      payer: "0x0000000000000000000000000000000000000002",
+      amount: 1n,
+      createdAt: 100n,
+      dueAt: 200n,
+      paidAt: 0n,
+      metadataHash: hashInvoiceMetadata(metadata),
+      status: 0
+    }),
+    metadataBatch: async () =>
+      new Map([
+        [id, { metadata, metadataHash: hashInvoiceMetadata(metadata) }],
+        [second, { metadata: { ...metadata, title: "Tampered" } }]
+      ])
+  });
+  assert.equal(invoices[0].metadataState, "verified");
+  assert.equal(invoices[1].metadataState, "invalid");
+  assert.equal(invoices[1].title, undefined);
+});
+
+test("metadata service outage retains all verified chain fields", async () => {
+  const [invoice] = await fetchWalletInvoices(wallet, {
+    count: async () => 1n,
+    page: async () => [id],
+    invoice: async () => ({
+      id,
+      merchant: wallet,
+      payer: "0x0000000000000000000000000000000000000002",
+      amount: 5_000_000n,
+      createdAt: 100n,
+      dueAt: 200n,
+      paidAt: 0n,
+      metadataHash: hashInvoiceMetadata(metadata),
+      status: 0
+    }),
+    metadataBatch: async () => {
+      throw new Error("service unavailable");
+    }
+  });
+  assert.equal(invoice.amount, "5");
+  assert.equal(invoice.metadataState, "error");
 });
 
 test("metadata hash mismatch fails closed", async () => {

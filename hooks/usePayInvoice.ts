@@ -231,7 +231,7 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
     setLoadError(undefined);
     setLoadErrorInvoiceId(undefined);
     void load();
-  }, [load]);
+  }, [invoiceId, load]);
 
   const pay = useCallback(async () => {
     const paymentRequest = requestId();

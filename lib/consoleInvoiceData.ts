@@ -1,4 +1,5 @@
 import type { Invoice } from "../types/invoice.ts";
+import { parseUsdc } from "./format.ts";
 
 function normalizeWallet(wallet?: string | null) {
   const trimmedWallet = wallet?.trim();
@@ -23,10 +24,10 @@ export function getConsoleInvoiceData(invoices: Invoice[], wallet?: string | nul
         receivableCount: 0,
         payableCount: 0,
         paidCount: 0,
-        pendingReceivableAmount: 0,
-        pendingPayableAmount: 0,
-        totalReceived: 0,
-        totalPayableDue: 0,
+        pendingReceivableAmount: 0n,
+        pendingPayableAmount: 0n,
+        totalReceived: 0n,
+        totalPayableDue: 0n,
         successRate: 0,
         counterpartyCount: 0
       }
@@ -44,14 +45,14 @@ export function getConsoleInvoiceData(invoices: Invoice[], wallet?: string | nul
   });
   const totalReceived = receivables
     .filter((invoice) => invoice.status === "paid")
-    .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+    .reduce((sum, invoice) => sum + parseUsdc(invoice.amount), 0n);
   const pendingReceivableAmount = receivables
     .filter((invoice) => invoice.status === "pending")
-    .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+    .reduce((sum, invoice) => sum + parseUsdc(invoice.amount), 0n);
   const pendingPayableAmount = payables
     .filter((invoice) => invoice.status === "pending")
-    .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
-  const totalPayableDue = payables.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+    .reduce((sum, invoice) => sum + parseUsdc(invoice.amount), 0n);
+  const totalPayableDue = payables.reduce((sum, invoice) => sum + parseUsdc(invoice.amount), 0n);
   const activeInvoices = [...receivables, ...payables].filter((invoice) => invoice.status !== "expired");
   const paidCount = [...receivables, ...payables].filter((invoice) => invoice.status === "paid").length;
   const counterparties = new Set(

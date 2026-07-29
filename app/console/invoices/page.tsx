@@ -11,12 +11,35 @@ import { formatCurrency, shortenAddress } from "@/lib/format";
 
 export default function ConsoleInvoicesPage() {
   const { address } = useAccount();
-  const { invoices, isReady, error, refresh } = useInvoices();
+  const { invoices, status, error, refresh } = useInvoices();
   const walletScope = useMemo(() => getConsoleWalletScope(address), [address]);
   const { payables, receivables, summary } = useMemo(
     () => getConsoleInvoiceData(invoices, walletScope.wallet),
     [invoices, walletScope.wallet]
   );
+  if (status !== "ready" && status !== "partial") {
+    const message =
+      status === "disconnected"
+        ? "Connect a wallet to load its Arc Testnet invoices."
+        : status === "loading"
+          ? "Loading Arc Testnet invoices..."
+          : error ?? "Unable to load Arc Testnet invoices.";
+    return (
+      <section
+        aria-live={status === "error" ? "assertive" : "polite"}
+        className={`rounded-[2rem] border p-6 shadow-card ${
+          status === "error" ? "border-red-200 bg-red-50 text-red-900" : "border-slate-200 bg-white text-ink"
+        }`}
+        role={status === "error" ? "alert" : "status"}
+      >
+        <h2 className="text-2xl font-black">Invoice console</h2>
+        <p className="mt-3 text-sm font-bold">{message}</p>
+        {status === "error" ? (
+          <button className="mt-4 underline" onClick={() => void refresh()} type="button">Retry</button>
+        ) : null}
+      </section>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -47,19 +70,9 @@ export default function ConsoleInvoicesPage() {
               <p className="mt-1 text-sm font-bold text-muted">Received</p>
             </div>
           </div>
-          {!walletScope.wallet ? (
-            <p className="mt-5 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900">
-              Connect a wallet to load its Arc Testnet invoices.
-            </p>
-          ) : null}
-          {walletScope.wallet && !isReady ? (
-            <p className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-muted">
-              Loading Arc Testnet invoice ledger...
-            </p>
-          ) : null}
-          {error ? (
-            <p className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">
-              {error}{" "}<button className="underline" onClick={() => void refresh()} type="button">Retry</button>
+          {status === "partial" ? (
+            <p aria-live="polite" className="mt-5 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900" role="status">
+              Chain fields are current. Some invoice descriptions could not be verified.
             </p>
           ) : null}
         </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronDown, Copy, LogOut, Wallet } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useDisconnect } from "wagmi";
 import {
   copyWalletAddressIfCurrent,
@@ -29,18 +29,18 @@ export function WalletAccountPopover({
   const active = useRef(true);
   const { disconnect } = useDisconnect();
 
-  const clearCopyState = () => {
+  const clearCopyState = useCallback(() => {
     copyGeneration.current += 1;
     if (copyTimer.current) clearTimeout(copyTimer.current);
     copyTimer.current = undefined;
     setCopied(false);
-  };
+  }, []);
 
-  const close = (restoreFocus = false) => {
+  const close = useCallback((restoreFocus = false) => {
     setOpen(false);
     clearCopyState();
     if (restoreFocus) queueMicrotask(() => triggerRef.current?.focus());
-  };
+  }, [clearCopyState]);
 
   useEffect(() => {
     if (!open) return;
@@ -51,7 +51,7 @@ export function WalletAccountPopover({
       (target) => target instanceof Node && Boolean(containerRef.current?.contains(target)),
       (reason) => close(reason === "escape")
     );
-  }, [open]);
+  }, [close, open]);
 
   useEffect(() => {
     active.current = true;

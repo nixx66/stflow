@@ -1,17 +1,38 @@
+const USDC_SCALE = 1_000_000n;
+
 export function shortenAddress(value?: string, chars = 4) {
   if (!value) return "Not connected";
   if (value.length <= chars * 2 + 2) return value;
   return `${value.slice(0, chars + 2)}...${value.slice(-chars)}`;
 }
 
-export function formatCurrency(amount: string | number, currency = "USDC") {
-  const numeric = typeof amount === "number" ? amount : Number(amount);
-  if (Number.isNaN(numeric)) return `${amount} ${currency}`;
+export function parseUsdc(value: string) {
+  const match = /^(\d+)(?:\.(\d{1,6}))?$/.exec(value.trim());
+  if (!match) throw new Error("Invalid USDC amount.");
+  return BigInt(match[1]) * USDC_SCALE + BigInt((match[2] ?? "").padEnd(6, "0"));
+}
 
-  return `${new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: numeric % 1 === 0 ? 0 : 2,
-    maximumFractionDigits: 2
-  }).format(numeric)} ${currency}`;
+function formatRawUsdc(raw: bigint) {
+  const sign = raw < 0n ? "-" : "";
+  const absolute = raw < 0n ? -raw : raw;
+  const whole = (absolute / USDC_SCALE)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const fraction = (absolute % USDC_SCALE).toString().padStart(6, "0").replace(/0+$/, "");
+  return `${sign}${whole}${fraction ? `.${fraction}` : ""}`;
+}
+
+export function formatCurrency(amount: string | number | bigint, currency = "USDC") {
+  let raw: bigint;
+  try {
+    raw =
+      typeof amount === "bigint"
+        ? amount
+        : parseUsdc(typeof amount === "number" ? amount.toString() : amount);
+  } catch {
+    return `${amount} ${currency}`;
+  }
+  return `${formatRawUsdc(raw)} ${currency}`;
 }
 
 export function formatDate(value?: string) {

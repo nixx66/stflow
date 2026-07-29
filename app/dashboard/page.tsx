@@ -13,7 +13,7 @@ import { useDashboard } from "@/hooks/useDashboard";
 const loadingStatLabels = ["Total Received", "Paid Invoices", "Pending Invoices", "Total Volume"] as const;
 
 export default function DashboardPage() {
-  const { address, error, incomingInvoices, invoices, isConnected, isReady, refresh, stats } = useDashboard();
+  const { address, error, incomingInvoices, invoices, isConnected, isReady, refresh, stats, status } = useDashboard();
   const recentTransactions = invoices.filter((invoice) => invoice.status === "paid");
 
   return (
@@ -33,33 +33,38 @@ export default function DashboardPage() {
               <Landmark className="h-4 w-4 text-arc-600" />
               Arc Testnet registry
             </span>
-            <Link
+            {isReady ? <Link
               className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-arc-600 px-4 text-sm font-semibold text-white shadow-soft transition hover:bg-arc-500"
               href="/invoice/new"
             >
               <FilePlus2 className="h-4 w-4" />
               Create Invoice
-            </Link>
+            </Link> : null}
           </div>
         </div>
 
-        {error ? (
-          <div className="mb-6 flex items-center justify-between gap-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">
+        {status === "error" ? (
+          <div aria-live="assertive" className="mb-6 flex items-center justify-between gap-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800" role="alert">
             <span>{error}</span>
             <button className="shrink-0 underline" onClick={() => void refresh()} type="button">
               Retry
             </button>
           </div>
         ) : null}
-        {!isConnected ? (
-          <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+        {status === "disconnected" ? (
+          <div aria-live="polite" className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900" role="status">
             Wallet connection is required. No invoice totals are shown until Arc Testnet data can be read.
+          </div>
+        ) : null}
+        {status === "partial" ? (
+          <div aria-live="polite" className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900" role="status">
+            Chain amounts and statuses are current. Some descriptive metadata is missing or could not be verified.
           </div>
         ) : null}
         {isReady ? (
           <DashboardStats stats={stats} />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          status === "loading" ? <div aria-live="polite" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" role="status">
             {loadingStatLabels.map((label) => (
               <article
                 className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
@@ -72,9 +77,10 @@ export default function DashboardPage() {
                 <div className="mt-5 h-8 w-28 animate-pulse rounded-md bg-slate-100" />
               </article>
             ))}
-          </div>
+          </div> : null
         )}
 
+        {isReady ? <>
         <section className="mt-10 rounded-[2rem] border border-[#c9ecd3] bg-[linear-gradient(135deg,rgba(231,248,236,0.92),rgba(255,255,255,0.8)_54%,rgba(255,248,232,0.76))] p-5 shadow-[0_30px_90px_rgba(4,41,31,0.08)] backdrop-blur-xl sm:p-6">
           <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
@@ -101,7 +107,7 @@ export default function DashboardPage() {
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="truncate text-lg font-black text-ink">{invoice.title}</p>
+                      <p className="truncate text-lg font-black text-ink">{invoice.title ?? "Metadata unavailable"}</p>
                       <span className="rounded-full bg-[#e7f8ec] px-3 py-1 text-xs font-black text-[#063f2c] ring-1 ring-[#c9ecd3]">
                         Payable
                       </span>
@@ -150,6 +156,7 @@ export default function DashboardPage() {
             </div>
           ) : null}
         </section>
+        </> : null}
 
         <section className="mt-10">
           <div className="mb-4">

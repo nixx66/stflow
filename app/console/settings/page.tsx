@@ -2,20 +2,19 @@ import { DataPanel } from "@/components/console/DataPanel";
 import { WalletStatusCard } from "@/components/wallet/WalletStatusCard";
 
 const settings = [
-  ["Wallet connection", "Merchant wallet and payer wallet connection remain enabled through the V1 wallet layer."],
-  ["Network", "Keep the testnet as the default build path before live settlement is wired."],
-  ["USDC settlement", "Payments use the configured invoice registry and USDC contract on Arc Testnet."],
-  ["Invoice status", "Draft, pending, paid, and closed are available as V2 operating states."],
-  ["Memo and note", "Internal memo fields are ready for reconciliation and future memo proof data."],
-  ["PDF receipt", "Receipt data is structured. Server-side PDF generation is reserved for the next implementation step."]
+  ["Wallet authority", "The connected merchant signs invoice creation and metadata authorization."],
+  ["Network", "Contract reads and writes are fixed to Arc Testnet."],
+  ["USDC settlement", "The registry transfers Arc Testnet USDC only from the assigned payer."],
+  ["Invoice status", "Pending, paid, cancelled, and deadline-derived expired are the supported states."],
+  ["Metadata", "Customer-facing text is shown only when it matches the hash committed onchain."],
+  ["Receipt proof", "Paid receipts require a verified registry payment event."]
 ];
 
 export default function ConsoleSettingsPage() {
   return (
     <div className="space-y-6">
       <WalletStatusCard audience="merchant" />
-
-      <DataPanel eyebrow="Merchant settings" title="V2 configuration placeholders">
+      <DataPanel eyebrow="Merchant settings" title="Arc Testnet configuration">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {settings.map(([title, detail]) => (
             <article className="rounded-3xl border border-slate-200 bg-slate-50 p-5" key={title}>
