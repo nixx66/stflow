@@ -54,6 +54,11 @@ settlement:
 npm run test:integration
 ```
 
+The regular `npm test` command intentionally skips this opt-in integration
+case so unit tests do not start local blockchain processes. Run
+`npm run test:integration` explicitly whenever contract or transaction code
+changes.
+
 `forge` and `anvil` must be on `PATH`. On Windows, explicit executable paths
 can be supplied without changing the machine configuration:
 

@@ -44,7 +44,7 @@ const usdcAbi = parseAbi([
   "function mint(address account,uint256 amount)",
 ]);
 
-integration("settles an invoice only from its assigned payer", async (t) => {
+integration("settles an invoice only from its assigned payer", { timeout: 30_000 }, async (t) => {
   const anvil = await startAnvil();
   t.after(() => anvil.stop());
 
@@ -64,7 +64,11 @@ integration("settles an invoice only from its assigned payer", async (t) => {
     abi: usdcArtifact.abi,
     bytecode: usdcArtifact.bytecode,
   });
-  const usdcReceipt = await publicClient.waitForTransactionReceipt({ hash: usdcHash });
+  const usdcReceipt = await publicClient.waitForTransactionReceipt({
+    hash: usdcHash,
+    timeout: 10_000,
+  });
+  assert.equal(usdcReceipt.status, "success");
   assert.ok(usdcReceipt.contractAddress);
 
   const registryHash = await merchantClient.deployContract({
@@ -74,8 +78,11 @@ integration("settles an invoice only from its assigned payer", async (t) => {
   });
   const registryReceipt = await publicClient.waitForTransactionReceipt({
     hash: registryHash,
+    timeout: 10_000,
   });
-  assert.ok(registryReceipt.contractAddress);
+  assert.equal(registryReceipt.status, "success");
+  const registryAddress = registryReceipt.contractAddress;
+  assert.ok(registryAddress);
 
   const usdc = getContract({
     address: usdcReceipt.contractAddress,
@@ -83,7 +90,7 @@ integration("settles an invoice only from its assigned payer", async (t) => {
     client: { public: publicClient, wallet: merchantClient },
   });
   const registry = getContract({
-    address: registryReceipt.contractAddress,
+    address: registryAddress,
     abi: registryAbi,
     client: { public: publicClient, wallet: merchantClient },
   });
@@ -101,7 +108,11 @@ integration("settles an invoice only from its assigned payer", async (t) => {
   const invoiceId = invoiceIdFromReference(merchant.address, referenceId);
 
   const mintHash = await usdc.write.mint([payer.address, amount]);
-  await publicClient.waitForTransactionReceipt({ hash: mintHash });
+  const mintReceipt = await publicClient.waitForTransactionReceipt({
+    hash: mintHash,
+    timeout: 10_000,
+  });
+  assert.equal(mintReceipt.status, "success");
 
   const createHash = await registry.write.createInvoice([
     referenceId,
@@ -112,11 +123,16 @@ integration("settles an invoice only from its assigned payer", async (t) => {
   ]);
   const createReceipt = await publicClient.waitForTransactionReceipt({
     hash: createHash,
+    timeout: 10_000,
   });
+  assert.equal(createReceipt.status, "success");
   const created = parseEventLogs({
     abi: registryAbi,
     eventName: "InvoiceCreated",
-    logs: createReceipt.logs,
+    logs: createReceipt.logs.filter(
+      (log) =>
+        log.address.toLowerCase() === registryAddress.toLowerCase(),
+    ),
   });
   assert.equal(created.length, 1);
   assert.deepEqual(created[0].args, {
@@ -164,6 +180,7 @@ integration("settles an invoice only from its assigned payer", async (t) => {
   });
   const rejectedReceipt = await publicClient.waitForTransactionReceipt({
     hash: rejectedHash,
+    timeout: 10_000,
   });
   assert.equal(rejectedReceipt.status, "reverted");
 
@@ -173,7 +190,11 @@ integration("settles an invoice only from its assigned payer", async (t) => {
     client: { public: publicClient, wallet: payerClient },
   });
   const approveHash = await payerUsdc.write.approve([registry.address, amount]);
-  await publicClient.waitForTransactionReceipt({ hash: approveHash });
+  const approveReceipt = await publicClient.waitForTransactionReceipt({
+    hash: approveHash,
+    timeout: 10_000,
+  });
+  assert.equal(approveReceipt.status, "success");
   assert.equal(await payerUsdc.read.allowance([payer.address, registry.address]), amount);
 
   const merchantBefore = await usdc.read.balanceOf([merchant.address]);
@@ -184,10 +205,17 @@ integration("settles an invoice only from its assigned payer", async (t) => {
     functionName: "payInvoice",
     args: [invoiceId],
   });
-  const payReceipt = await publicClient.waitForTransactionReceipt({ hash: payHash });
+  const payReceipt = await publicClient.waitForTransactionReceipt({
+    hash: payHash,
+    timeout: 10_000,
+  });
   assert.equal(payReceipt.status, "success");
 
   const paid = payReceipt.logs
+    .filter(
+      (log) =>
+        log.address.toLowerCase() === registryAddress.toLowerCase(),
+    )
     .map((log) => {
       try {
         return decodeEventLog({ abi: registryAbi, data: log.data, topics: log.topics });
