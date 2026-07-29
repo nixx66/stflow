@@ -38,7 +38,8 @@ async function main() {
   if (
     standardJson !== replayStandardJson ||
     first.artifactJson !== replay.artifactJson ||
-    first.buildInfoJson !== replay.buildInfoJson ||
+    first.buildInputJson !== replay.buildInputJson ||
+    first.contractOutputJson !== replay.contractOutputJson ||
     first.artifact.bytecode.object !== replay.artifact.bytecode.object ||
     first.artifact.deployedBytecode.object !== replay.artifact.deployedBytecode.object
   ) {
@@ -49,7 +50,8 @@ async function main() {
     artifact: first.artifact,
     buildInfo: first.buildInfo,
     artifactJson: first.artifactJson,
-    buildInfoJson: first.buildInfoJson,
+    buildInputJson: first.buildInputJson,
+    contractOutputJson: first.contractOutputJson,
     standardJson,
     commit,
     sourceHashes: sourceHashes(first.standardInput),

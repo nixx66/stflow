@@ -60,21 +60,6 @@ export async function validateBuildProvenance({
   }
 }
 
-function releaseBuildInfo(buildInfo) {
-  return {
-    id: buildInfo.id,
-    solcVersion: buildInfo.solcVersion,
-    solcLongVersion: buildInfo.solcLongVersion,
-    language: buildInfo.language,
-    input: {
-      language: buildInfo.input.language,
-      sources: buildInfo.input.sources,
-      settings: buildInfo.input.settings,
-    },
-    output: buildInfo.output,
-  };
-}
-
 function git(root, args, options = {}) {
   return execFileSync("git", args, { cwd: root, ...options });
 }
@@ -134,12 +119,14 @@ export async function buildCommit({ root, commit }) {
       tracked,
     });
     const standardInput = await standardInputFromBuild({ buildInfo, readCommitBlob });
+    const contractOutput = buildInfo.output.contracts[contractPath][contractName];
 
     return {
       artifact,
       artifactJson,
       buildInfo,
-      buildInfoJson: JSON.stringify(releaseBuildInfo(buildInfo)),
+      buildInputJson: JSON.stringify(standardInput),
+      contractOutputJson: JSON.stringify(contractOutput),
       standardInput,
     };
   } finally {

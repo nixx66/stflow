@@ -111,7 +111,8 @@ export function buildDeploymentRequest({
   artifact,
   buildInfo,
   artifactJson,
-  buildInfoJson,
+  buildInputJson,
+  contractOutputJson,
   standardJson,
   commit,
   sourceHashes,
@@ -164,7 +165,6 @@ export function buildDeploymentRequest({
     source: {
       sourceCommit: commit,
       target: "contracts/src/STFlowInvoiceRegistry.sol:STFlowInvoiceRegistry",
-      buildInfoId: buildInfo.id,
       files: sourceHashes,
     },
     bytecode: {
@@ -178,7 +178,8 @@ export function buildDeploymentRequest({
       creationDataKeccak: keccak256(creationData),
       runtimeArtifactKeccak: keccak256(runtime),
       artifactSha256: sha256(artifactJson),
-      buildInfoSha256: sha256(buildInfoJson),
+      buildInputSha256: sha256(buildInputJson),
+      contractOutputSha256: sha256(contractOutputJson),
       standardJsonSha256: sha256(standardJson),
     },
     sourceVerification: {

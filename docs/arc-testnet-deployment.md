@@ -47,7 +47,9 @@ directories. It never compiles worktree bytes. It verifies:
 - artifact init/runtime bytecode matches full build-info output;
 - both clean compiler replays produce identical standard JSON and bytecode;
 - compiler is exactly `0.8.30`, optimizer is enabled with 200 runs, and the complete
-  EVM version, metadata, `viaIR`, remapping, and library settings are recorded.
+  EVM version, metadata, `viaIR`, remapping, and library settings are recorded;
+- Foundry's non-semantic build-info wrapper ID is excluded, while canonical compiler
+  input and registry contract output are hashed separately.
 
 The ignored `.stflow-deployment/` directory receives:
 
@@ -56,7 +58,7 @@ The ignored `.stflow-deployment/` directory receives:
 
 The manifest contains the source commit, complete settings, constructor, init and
 runtime bytecode, immutable references, exact creation data and byte length, plus
-artifact/build-info/standard-JSON/source hashes. It has no timestamp, so identical
+artifact/compiler-input/contract-output/standard-JSON/source hashes. It has no timestamp, so identical
 inputs produce identical request bytes.
 
 **Checkpoint A:** Confirm the command reports `NOT_DEPLOYED`, chain `5042002`, the

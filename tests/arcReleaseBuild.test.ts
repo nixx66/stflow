@@ -115,6 +115,7 @@ test(
     }).trim();
     const { buildCommit } = await import("../scripts/arcReleaseBuild.mjs");
     const release = await buildCommit({ root, commit });
+    const replay = await buildCommit({ root, commit });
 
     assert.equal(release.buildInfo.solcVersion, "0.8.30");
     assert.equal(release.buildInfo.input.settings.optimizer.runs, 200);
@@ -122,6 +123,15 @@ test(
     assert.equal(
       release.standardInput.sources[sourcePath].content,
       release.buildInfo.input.sources[sourcePath].content,
+    );
+    assert.equal(typeof release.buildInputJson, "string");
+    assert.equal(typeof release.contractOutputJson, "string");
+    assert.equal(release.buildInputJson, replay.buildInputJson);
+    assert.equal(release.contractOutputJson, replay.contractOutputJson);
+    assert.equal(release.artifact.bytecode.object, replay.artifact.bytecode.object);
+    assert.equal(
+      release.artifact.deployedBytecode.object,
+      replay.artifact.deployedBytecode.object,
     );
   },
 );

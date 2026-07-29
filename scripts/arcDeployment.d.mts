@@ -25,7 +25,8 @@ export function buildDeploymentRequest(input: {
   artifact: Artifact;
   buildInfo: Record<string, any>;
   artifactJson: string;
-  buildInfoJson: string;
+  buildInputJson: string;
+  contractOutputJson: string;
   standardJson: string;
   commit: string;
   sourceHashes: Record<string, any>;
