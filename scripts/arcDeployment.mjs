@@ -217,6 +217,12 @@ function expectAddress(value, label) {
   }
 }
 
+function rejectPlaceholder(value, label, digits) {
+  if (new RegExp(`^0x0{${digits}}$`, "i").test(value)) {
+    throw new Error(`${label} is a placeholder`);
+  }
+}
+
 function decodeAddress(value, label) {
   const hex = requireHex(value, label);
   if (hex.length !== 66) throw new Error(`${label} returned malformed data`);
@@ -232,9 +238,9 @@ function decodeUint(value, label) {
 export async function validateDeployment({ address, tx, request, rpc }) {
   const release = validateManifest(request);
   const registry = expectAddress(address, "deployment address");
-  if (/^0x0{40}$/i.test(registry)) throw new Error("deployment address is a placeholder");
+  rejectPlaceholder(registry, "deployment address", 40);
   if (!/^0x[0-9a-fA-F]{64}$/.test(tx)) throw new Error("transaction hash is invalid");
-  if (/^0x0{64}$/i.test(tx)) throw new Error("transaction hash is a placeholder");
+  rejectPlaceholder(tx, "transaction hash", 64);
 
   const chainId = Number(await rpc("eth_chainId", []));
   if (chainId !== ARC_CHAIN_ID) {
@@ -263,6 +269,11 @@ export async function validateDeployment({ address, tx, request, rpc }) {
     throw new Error("deployment input does not match the signed request");
   }
   const deployer = expectAddress(transaction.from, "deployer");
+  rejectPlaceholder(deployer, "deployer", 40);
+  if (!/^0x[0-9a-fA-F]{64}$/.test(transaction.blockHash)) {
+    throw new Error("transaction block hash is invalid");
+  }
+  rejectPlaceholder(transaction.blockHash, "block hash", 64);
   if (receipt.from && expectAddress(receipt.from, "receipt deployer") !== deployer) {
     throw new Error("transaction and receipt deployers differ");
   }

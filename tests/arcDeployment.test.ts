@@ -201,6 +201,37 @@ test("verification requires an exact contract-creation transaction", async () =>
     verify({ eth_getTransactionByHash: { ...base, from: registry } }),
     /deployers differ/i,
   );
+  await assert.rejects(
+    verify({
+      eth_getTransactionByHash: {
+        ...base,
+        from: "0x0000000000000000000000000000000000000000",
+      },
+      eth_getTransactionReceipt: {
+        status: "0x1",
+        transactionHash: tx,
+        contractAddress: registry,
+        blockNumber: "0x2a",
+        blockHash,
+        from: "0x0000000000000000000000000000000000000000",
+      },
+    }),
+    /placeholder/i,
+  );
+  await assert.rejects(
+    verify({
+      eth_getTransactionByHash: { ...base, blockHash: `0x${"00".repeat(32)}` },
+      eth_getTransactionReceipt: {
+        status: "0x1",
+        transactionHash: tx,
+        contractAddress: registry,
+        blockNumber: "0x2a",
+        blockHash: `0x${"00".repeat(32)}`,
+        from: deployer,
+      },
+    }),
+    /placeholder/i,
+  );
 });
 
 test("verification rejects bytecode, immutable USDC, and malformed decimals", async () => {
