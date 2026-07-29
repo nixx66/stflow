@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   copyWalletAddress,
+  copyWalletAddressIfCurrent,
   getMerchantWalletDisplay,
   getWalletConnectionLabel,
   getWalletNetworkLabel,
@@ -67,4 +68,45 @@ test("reports clipboard failures without swallowing the wallet flow", async () =
   });
 
   assert.equal(copied, false);
+});
+
+test("ignores a clipboard result invalidated while the write is pending", async () => {
+  let resolveWrite!: () => void;
+  let generation = 1;
+  let feedback = 0;
+  const write = new Promise<void>((resolve) => {
+    resolveWrite = resolve;
+  });
+
+  const pending = copyWalletAddressIfCurrent(
+    "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+    () => write,
+    () => generation === 1,
+    () => {
+      feedback += 1;
+    }
+  );
+
+  generation += 1;
+  resolveWrite();
+
+  assert.equal(await pending, false);
+  assert.equal(feedback, 0);
+});
+
+test("allows a new clipboard attempt after an earlier attempt is invalidated", async () => {
+  let generation = 2;
+  let feedback = 0;
+
+  const copied = await copyWalletAddressIfCurrent(
+    "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+    async () => {},
+    () => generation === 2,
+    () => {
+      feedback += 1;
+    }
+  );
+
+  assert.equal(copied, true);
+  assert.equal(feedback, 1);
 });

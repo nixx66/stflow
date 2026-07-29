@@ -3,7 +3,10 @@
 import { Check, ChevronDown, Copy, LogOut, Wallet } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { useDisconnect } from "wagmi";
-import { copyWalletAddress, shortenWalletAddress } from "@/lib/walletDisplay";
+import {
+  copyWalletAddressIfCurrent,
+  shortenWalletAddress
+} from "@/lib/walletDisplay";
 import { listenForPopoverDismiss } from "@/lib/walletPopover";
 
 type WalletAccountPopoverProps = {
@@ -22,9 +25,12 @@ export function WalletAccountPopover({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const copyButtonRef = useRef<HTMLButtonElement>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const copyGeneration = useRef(0);
+  const active = useRef(true);
   const { disconnect } = useDisconnect();
 
   const clearCopyState = () => {
+    copyGeneration.current += 1;
     if (copyTimer.current) clearTimeout(copyTimer.current);
     copyTimer.current = undefined;
     setCopied(false);
@@ -49,6 +55,8 @@ export function WalletAccountPopover({
 
   useEffect(
     () => () => {
+      active.current = false;
+      copyGeneration.current += 1;
       if (copyTimer.current) clearTimeout(copyTimer.current);
     },
     []
@@ -57,15 +65,17 @@ export function WalletAccountPopover({
   const copyAddress = async () => {
     if (!navigator.clipboard?.writeText) return;
 
-    const success = await copyWalletAddress(
+    const generation = ++copyGeneration.current;
+    await copyWalletAddressIfCurrent(
       address,
-      navigator.clipboard.writeText.bind(navigator.clipboard)
+      navigator.clipboard.writeText.bind(navigator.clipboard),
+      () => active.current && copyGeneration.current === generation,
+      () => {
+        setCopied(true);
+        if (copyTimer.current) clearTimeout(copyTimer.current);
+        copyTimer.current = setTimeout(() => setCopied(false), 1800);
+      }
     );
-    if (!success) return;
-
-    setCopied(true);
-    if (copyTimer.current) clearTimeout(copyTimer.current);
-    copyTimer.current = setTimeout(() => setCopied(false), 1800);
   };
 
   const disconnectWallet = () => {
@@ -79,7 +89,15 @@ export function WalletAccountPopover({
         aria-controls={open ? actionsId : undefined}
         aria-expanded={open}
         className={buttonClassName}
-        onClick={() => (open ? close() : setOpen(true))}
+        onClick={() => {
+          if (open) {
+            close();
+            return;
+          }
+
+          clearCopyState();
+          setOpen(true);
+        }}
         ref={triggerRef}
         type="button"
       >

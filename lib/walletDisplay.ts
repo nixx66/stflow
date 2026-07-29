@@ -26,6 +26,19 @@ export async function copyWalletAddress(
   }
 }
 
+export async function copyWalletAddressIfCurrent(
+  address: string,
+  writeText: (value: string) => Promise<void>,
+  isCurrent: () => boolean,
+  showFeedback: () => void
+) {
+  const copied = await copyWalletAddress(address, writeText);
+  if (!copied || !isCurrent()) return false;
+
+  showFeedback();
+  return true;
+}
+
 export function getMerchantWalletDisplay({
   connectedWallet,
   livePayment
