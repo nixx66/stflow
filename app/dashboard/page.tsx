@@ -156,7 +156,6 @@ export default function DashboardPage() {
             </div>
           ) : null}
         </section>
-        </> : null}
 
         <section className="mt-10">
           <div className="mb-4">
@@ -167,6 +166,7 @@ export default function DashboardPage() {
           </div>
           <TransactionTable invoices={recentTransactions} />
         </section>
+        </> : null}
       </section>
     </main>
   );

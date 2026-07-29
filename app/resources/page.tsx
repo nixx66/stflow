@@ -29,12 +29,12 @@ const resources = [
   {
     title: "Pitch outline",
     icon: Rocket,
-    copy: "Problem, payment workflow, integration path, roadmap, and monetization talking points."
+    copy: "Problem, assigned-payer workflow, Arc Testnet contract authority, metadata verification, and settlement proof."
   },
   {
     title: "Launch checklist",
     icon: ListChecks,
-    copy: "Wallet setup, testnet funds, checkout QA, receipt copy, dashboard review, and support states."
+    copy: "Wallet setup, Arc Testnet USDC, assigned-payer checkout, receipt verification, and dashboard error states."
   },
   {
     title: "FAQ starter",
@@ -44,7 +44,7 @@ const resources = [
   {
     title: "Compliance notes",
     icon: FileCheck2,
-    copy: "Non-custodial positioning, receipt language, payment disclaimers, and proof wording placeholders."
+    copy: "Non-custodial positioning, testnet disclaimers, assigned-payer authorization, and onchain proof boundaries."
   }
 ] as const;
 
@@ -75,7 +75,7 @@ const stackGroups = [
       },
       {
         name: "wagmi and viem",
-        copy: "Lightweight Ethereum tooling for wallet state, chain checks, contract reads, signatures, and future testnet USDC transfers."
+        copy: "Wallet state, Arc Testnet contract reads, signed metadata authorization, USDC approval, and registry settlement."
       }
     ]
   },
@@ -101,11 +101,11 @@ const stackGroups = [
     items: [
       {
         name: "Testnet",
-        copy: "The settlement validation layer for low-cost testing of USDC payments, transaction records, and future proof fields."
+        copy: "The fixed network for registry-backed invoice creation, assigned-payer USDC settlement, and transaction proof."
       },
       {
         name: "Arc Testnet settlement",
-        copy: "Start with a complete local workflow, then connect real USDC payments, transaction hashes, explorer links, and proof data when the product path is stable."
+        copy: "Invoices are created in the registry, paid by the assigned wallet in USDC, and verified from contract state and events."
       }
     ]
   }
@@ -208,10 +208,10 @@ export default function ResourcesPage() {
         <div className="mx-auto grid max-w-[1760px] gap-8 px-4 sm:px-6 lg:grid-cols-[0.45fr_0.55fr] lg:items-center lg:px-8 2xl:px-10">
           <div>
             <p className="text-sm font-black uppercase tracking-[0.16em] text-[#0fa86b]">
-              Development Strategy
+              Onchain Operation
             </p>
             <h2 className="mt-4 text-4xl font-black leading-tight tracking-tight text-[#063f2c] sm:text-6xl">
-              Start with the product loop, then connect live settlement.
+              One Arc Testnet registry is the source of truth.
             </h2>
             <p className="mt-6 text-lg font-semibold leading-8 text-muted">
               STFlow records invoice authority and settlement state in the Arc Testnet registry. Descriptive metadata is returned only when it matches the hash committed onchain.
@@ -221,7 +221,7 @@ export default function ResourcesPage() {
           <div className="rounded-[2.25rem] border border-[#173c30] bg-[#04291f] p-6 text-white shadow-deep">
             <div className="mb-6 flex items-center gap-3">
               <ShieldCheck className="h-6 w-6 text-[#ffd85a]" />
-              <p className="font-black">Local flow validation</p>
+              <p className="font-black">Verified Arc Testnet flow</p>
             </div>
             <div className="grid gap-3">
               {flowSteps.map((step, index) => (

@@ -8,7 +8,13 @@ test("dashboard gates authoritative totals behind a successful chain read", () =
   assert.match(page, /status === "loading"/);
   assert.match(page, /status === "error"/);
   assert.match(page, /status === "partial"/);
-  assert.match(page, /\{isReady \? <>/);
+  const readyStart = page.indexOf("{isReady ? <>");
+  const transactions = page.indexOf("<TransactionTable");
+  const readyEnd = page.indexOf("</> : null}", readyStart);
+  assert.ok(readyStart >= 0);
+  assert.ok(transactions > readyStart);
+  assert.ok(readyEnd > transactions);
+  assert.equal(page.slice(readyEnd).includes("<TransactionTable"), false);
   assert.match(page, /aria-live=/);
   assert.match(page, /role="alert"/);
 });

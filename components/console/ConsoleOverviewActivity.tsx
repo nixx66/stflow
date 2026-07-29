@@ -3,6 +3,7 @@ import Link from "next/link";
 import { DataPanel } from "@/components/console/DataPanel";
 import { StatusBadge } from "@/components/StatusBadge";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { cashflowWidth } from "@/lib/cashflow";
 import { Invoice } from "@/types/invoice";
 
 type ConsoleOverviewActivityProps = {
@@ -39,6 +40,7 @@ export function ConsoleOverviewActivity({ latestEvents, receivables, summary }: 
       Icon: ArrowUpRight
     }
   ];
+  const total = cashflowRows.reduce((sum, row) => sum + row.amount, 0n);
 
   return (
     <section className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
@@ -64,7 +66,7 @@ export function ConsoleOverviewActivity({ latestEvents, receivables, summary }: 
                   <p className="font-mono text-sm font-black text-ink">{formatCurrency(amount)}</p>
                 </div>
                 <div className="mt-4 h-2 overflow-hidden rounded-full bg-white">
-                  <div className={`h-full rounded-full ${color}`} style={{ width: amount > 0n ? "100%" : "0%" }} />
+                  <div className={`h-full rounded-full ${color}`} style={{ width: cashflowWidth(amount, total) }} />
                 </div>
               </div>
             );

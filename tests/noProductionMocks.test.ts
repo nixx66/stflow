@@ -4,9 +4,11 @@ import { join, relative } from "node:path";
 import test from "node:test";
 
 const roots = ["app", "components", "hooks", "lib"];
-const configFiles = [".env.example", "package.json", "next.config.mjs", "vercel.json"];
+const configFiles = [".env.example", "package.json", "next.config.ts", "next.config.mjs", "vercel.json"];
+const rootWebArtifacts = ["STFlow.html", "index.html"];
 const ignored = [join("lib", "openzeppelin-contracts")];
 const bannedFiles = [
+  "STFlow.html",
   "lib/mockData.ts",
   "lib/v2MockData.ts",
   "lib/serverInvoiceStore.ts",
@@ -41,7 +43,11 @@ function files(root: string): string[] {
 test("production source has no operational mock, local ledger, or legacy invoice API", () => {
   assert.deepEqual(bannedFiles.filter(existsSync), []);
 
-  const violations = [...roots.flatMap(files), ...configFiles.filter(existsSync)].flatMap((path) => {
+  const violations = [
+    ...roots.flatMap(files),
+    ...configFiles.filter(existsSync),
+    ...rootWebArtifacts.filter(existsSync)
+  ].flatMap((path) => {
     const source = readFileSync(path, "utf8");
     return banned.filter((pattern) => pattern.test(source)).map((pattern) => {
       return `${relative(".", path)}: ${pattern}`;
@@ -59,6 +65,8 @@ test("operational surfaces contain no demo, seed, or generated-ledger language",
     ...files(join("app", "console")),
     ...files(join("app", "pay")),
     ...files(join("app", "receipt")),
+    ...files(join("app", "resources")),
+    ...files(join("components", "home")),
     ...files(join("components", "wallet")),
     ...files(join("components", "console"))
   ];
