@@ -21,3 +21,13 @@ test("account popover uses grouped buttons without claiming ARIA menu behavior",
   assert.match(popover, /triggerRef\.current\?\.focus/);
   assert.match(popover, /setCopied\(false\)/);
 });
+
+test("clipboard guard reactivates when StrictMode replays the mount effect", () => {
+  const popover = readFileSync("components/wallet/WalletAccountPopover.tsx", "utf8");
+  const setup = popover.indexOf("active.current = true");
+  const cleanup = popover.indexOf("active.current = false");
+
+  assert.notEqual(setup, -1);
+  assert.notEqual(cleanup, -1);
+  assert.ok(setup < cleanup);
+});

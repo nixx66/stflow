@@ -53,14 +53,15 @@ export function WalletAccountPopover({
     );
   }, [open]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    active.current = true;
+
+    return () => {
       active.current = false;
       copyGeneration.current += 1;
       if (copyTimer.current) clearTimeout(copyTimer.current);
-    },
-    []
-  );
+    };
+  }, []);
 
   const copyAddress = async () => {
     if (!navigator.clipboard?.writeText) return;
