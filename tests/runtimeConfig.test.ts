@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
@@ -6,9 +7,9 @@ import {
   ARC_TESTNET
 } from "../lib/arc.ts";
 import {
-  getServerRuntimeConfig,
+  parseServerRuntimeConfig,
   RuntimeConfigError
-} from "../lib/server/runtimeConfig.ts";
+} from "../lib/server/internal/runtimeConfig.ts";
 
 const validEnv = {
   SUPABASE_URL: "https://project-ref.supabase.co/",
@@ -16,6 +17,14 @@ const validEnv = {
   NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS:
     "0x1111111111111111111111111111111111111111"
 };
+const getServerRuntimeConfig = parseServerRuntimeConfig;
+
+function jwt(role: string) {
+  const encode = (value: object) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+
+  return `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ role })}.signature`;
+}
 
 test("reports every missing server variable without exposing values", () => {
   assert.throws(
@@ -97,7 +106,35 @@ test("accepts secure Supabase project and custom-domain URLs", () => {
     "https://project-ref.supabase.co",
     "https://supabase.example.com"
   ]) {
-    assert.equal(getServerRuntimeConfig({ ...validEnv, SUPABASE_URL: url }).supabaseUrl, url);
+    assert.equal(
+      getServerRuntimeConfig({ ...validEnv, SUPABASE_URL: url }).supabaseUrl,
+      url
+    );
+  }
+});
+
+test("accepts only service-role legacy JWT credentials", () => {
+  assert.doesNotThrow(() =>
+    getServerRuntimeConfig({
+      ...validEnv,
+      SUPABASE_SERVICE_ROLE_KEY: jwt("service_role")
+    })
+  );
+
+  for (const key of [jwt("anon"), "eyJ.invalid.signature"]) {
+    assert.throws(
+      () =>
+        getServerRuntimeConfig({
+          ...validEnv,
+          SUPABASE_SERVICE_ROLE_KEY: key
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof RuntimeConfigError);
+        assert.deepEqual(error.variables, ["SUPABASE_SERVICE_ROLE_KEY"]);
+        assert.doesNotMatch(error.message, /anon|invalid|signature/);
+        return true;
+      }
+    );
   }
 });
 
@@ -135,19 +172,78 @@ test("ignores environment attempts to override fixed Arc configuration", () => {
 });
 
 test("keeps Supabase credentials server-only and client creation lazy", async () => {
-  const [env, admin, legacyClient] = await Promise.all([
-    readFile(".env.example", "utf8"),
-    readFile("lib/server/supabase.ts", "utf8"),
-    readFile("lib/supabase.ts", "utf8").catch(() => "")
-  ]);
+  const [env, admin, guardedConfig, legacyClient, createHook] =
+    await Promise.all([
+      readFile(".env.example", "utf8"),
+      readFile("lib/server/supabase.ts", "utf8"),
+      readFile("lib/server/runtimeConfig.ts", "utf8"),
+      readFile("lib/supabase.ts", "utf8").catch(() => ""),
+      readFile("hooks/useCreateInvoice.ts", "utf8")
+    ]);
 
   assert.doesNotMatch(env, /NEXT_PUBLIC_SUPABASE_/);
   assert.match(env, /^SUPABASE_URL=/m);
   assert.match(env, /^SUPABASE_SERVICE_ROLE_KEY=/m);
   assert.doesNotMatch(legacyClient, /NEXT_PUBLIC_SUPABASE_/);
   assert.match(admin, /export function getSupabaseAdmin/);
-  assert.ok(admin.indexOf("createClient(") > admin.indexOf("export function getSupabaseAdmin"));
+  assert.match(admin, /^import "server-only";/m);
+  assert.match(guardedConfig, /^import "server-only";/m);
+  assert.ok(
+    admin.indexOf("createClient(") >
+      admin.indexOf("export function getSupabaseAdmin")
+  );
   assert.match(admin, /persistSession:\s*false/);
   assert.match(admin, /autoRefreshToken:\s*false/);
   assert.match(admin, /detectSessionInUrl:\s*false/);
+  assert.doesNotMatch(createHook, /NEXT_PUBLIC_SUPABASE_/);
+  assert.match(createHook, /\/api\/v1\/invoices\/metadata/);
+  assert.match(createHook, /metadataPending = true/);
+});
+
+test("server guards reject client imports without reading configuration", () => {
+  const guarded = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      "await import('./lib/server/runtimeConfig.ts')"
+    ],
+    { cwd: process.cwd(), encoding: "utf8" }
+  );
+
+  assert.notEqual(guarded.status, 0);
+  assert.match(
+    guarded.stderr,
+    /cannot be imported from a Client Component module/i
+  );
+  assert.doesNotMatch(
+    guarded.stderr,
+    /SUPABASE_SERVICE_ROLE_KEY|NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS/
+  );
+});
+
+test("server modules import lazily and cache the admin client", () => {
+  const script = `
+    const runtime = await import('./lib/server/runtimeConfig.ts');
+    await import('./lib/server/supabase.ts');
+    try {
+      runtime.getServerRuntimeConfig({});
+      process.exit(2);
+    } catch (error) {
+      if (error.name !== 'RuntimeConfigError') process.exit(3);
+    }
+    process.env.SUPABASE_URL = 'https://project-ref.supabase.co';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'sb_secret_1234567890abcdefghijklmnopqrstuvwxyz';
+    process.env.NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS = '0x1111111111111111111111111111111111111111';
+    const { getSupabaseAdmin } = await import('./lib/server/supabase.ts');
+    if (getSupabaseAdmin() !== getSupabaseAdmin()) process.exit(4);
+  `;
+  const guarded = spawnSync(
+    process.execPath,
+    ["--conditions=react-server", "--input-type=module", "--eval", script],
+    { cwd: process.cwd(), encoding: "utf8" }
+  );
+
+  assert.equal(guarded.status, 0, guarded.stderr);
+  assert.equal(guarded.stdout, "");
 });

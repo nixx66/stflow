@@ -52,13 +52,6 @@ export function getInvoiceCreateConfigError() {
     return "Invoice registry is not configured.";
   }
 
-  if (
-    !process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  ) {
-    return "Invoice metadata database is not configured.";
-  }
-
   return undefined;
 }
 
