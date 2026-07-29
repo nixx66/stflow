@@ -22,14 +22,15 @@ export async function enforceMetadataRateLimit(
   request: Request,
   route: string,
   wallet: string,
-  limit: number
+  limits: { wallet: number; client: number }
 ) {
   if (!isAddress(wallet, { strict: false })) throw new RateLimitError("Invalid wallet.");
   const { data, error } = await getSupabaseAdmin().rpc("consume_metadata_rate_limit", {
     p_route: route,
     p_wallet: getAddress(wallet).toLowerCase(),
     p_client_hash: clientHash(request),
-    p_limit: limit,
+    p_wallet_limit: limits.wallet,
+    p_client_limit: limits.client,
     p_window_seconds: 60
   });
   if (error) throw new ClientIdentityError("Rate limit unavailable.");

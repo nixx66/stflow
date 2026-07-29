@@ -3,6 +3,7 @@ import { issueInvoiceNonce } from "@/lib/server/internal/invoiceNonce";
 import { MetadataValidationError } from "@/lib/server/internal/signedInvoiceMetadata";
 import { getServerRuntimeConfig, RuntimeConfigError } from "@/lib/server/runtimeConfig";
 import { getSupabaseAdmin } from "@/lib/server/supabase";
+import { isAddress } from "viem";
 import { readBoundedJson, RequestBodyError } from "@/lib/server/internal/readBoundedJson";
 import {
   ClientIdentityError,
@@ -18,7 +19,13 @@ export async function POST(request: Request) {
     const db = getSupabaseAdmin();
     const payload = await readBoundedJson(request, MAX_BODY_BYTES) as
       Parameters<typeof issueInvoiceNonce>[0];
-    await enforceMetadataRateLimit(request, "nonce:create_invoice:v1", payload.wallet, 5);
+    if (!isAddress(payload.wallet, { strict: false })) {
+      throw new MetadataValidationError("Invalid wallet.");
+    }
+    await enforceMetadataRateLimit(request, "nonce:create_invoice:v1", payload.wallet, {
+      wallet: 5,
+      client: 20
+    });
     const result = await issueInvoiceNonce(payload, {
       registry: config.invoiceRegistryAddress,
       async save(row) {

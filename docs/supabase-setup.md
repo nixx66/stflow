@@ -52,6 +52,10 @@ idempotency and immutable-field conflict checks. It also adds a private,
 database-backed rate bucket shared by all server instances. Production requests
 fail closed unless Vercel supplies its trusted forwarding identity. Expired
 rate buckets and wallet nonces are pruned during rate-limit calls.
+Because no remote project exists and neither migration has been applied, the
+reviewed `002` file may still change before first application. After it is
+applied anywhere, treat its checksum as immutable and add a new numbered
+migration for every later change.
 
 ## Verify database access
 

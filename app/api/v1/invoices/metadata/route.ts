@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createPublicClient, http } from "viem";
+import { createPublicClient, http, isAddress } from "viem";
 import { arcTestnet } from "@/lib/chains";
 import { getInvoiceMetadataRepository } from "@/lib/server/invoiceMetadataRepository";
 import {
@@ -28,7 +28,11 @@ function walletFromChallenge(challenge: unknown) {
   if (typeof challenge !== "string") throw new MetadataValidationError("Invalid challenge.");
   const line = challenge.split("\n").find((part) => part.startsWith("Wallet: "));
   if (!line) throw new MetadataValidationError("Invalid challenge.");
-  return line.slice(8);
+  const wallet = line.slice(8);
+  if (!isAddress(wallet, { strict: false })) {
+    throw new MetadataValidationError("Invalid challenge.");
+  }
+  return wallet;
 }
 
 export async function POST(request: Request) {
@@ -44,7 +48,7 @@ export async function POST(request: Request) {
       request,
       "persist:create_invoice:v1",
       walletFromChallenge(body.challenge),
-      10
+      { wallet: 10, client: 30 }
     );
     const result = await persistSignedInvoiceMetadata(body, {
       repository: getInvoiceMetadataRepository(),

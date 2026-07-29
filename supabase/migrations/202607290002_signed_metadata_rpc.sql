@@ -1,12 +1,14 @@
 create table public.metadata_rate_limits (
-  route text not null check (length(route) between 1 and 100),
-  wallet text not null check (wallet ~ '^0x[0-9a-f]{40}$'),
-  client_hash text not null check (client_hash ~ '^[0-9a-f]{64}$'),
+  route text not null check (route ~ '^[a-z0-9:_-]{1,100}$'),
+  bucket_kind text not null check (bucket_kind in ('wallet', 'client')),
+  bucket_key text not null check (bucket_key ~ '^(0x[0-9a-f]{40}|[0-9a-f]{64})$'),
   window_started_at timestamptz not null,
   request_count integer not null check (request_count > 0),
   expires_at timestamptz not null check (expires_at > window_started_at),
-  primary key (route, wallet, client_hash, window_started_at)
+  primary key (route, bucket_kind, bucket_key, window_started_at)
 );
+create index metadata_rate_limits_expiry_idx
+  on public.metadata_rate_limits (expires_at);
 
 alter table public.metadata_rate_limits enable row level security;
 alter table public.metadata_rate_limits force row level security;
@@ -16,7 +18,8 @@ create function public.consume_metadata_rate_limit(
   p_route text,
   p_wallet text,
   p_client_hash text,
-  p_limit integer,
+  p_wallet_limit integer,
+  p_client_limit integer,
   p_window_seconds integer
 )
 returns boolean
@@ -27,10 +30,15 @@ as $$
 declare
   v_now timestamptz := pg_catalog.clock_timestamp();
   v_window timestamptz;
-  v_count integer;
+  v_wallet_count integer;
+  v_client_count integer;
 begin
-  if p_limit < 1 or p_limit > 100
+  if p_wallet_limit < 1 or p_wallet_limit > 100
+    or p_client_limit < 1 or p_client_limit > 100
     or p_window_seconds < 10 or p_window_seconds > 3600
+    or p_route !~ '^[a-z0-9:_-]{1,100}$'
+    or p_wallet !~ '^0x[0-9a-f]{40}$'
+    or p_client_hash !~ '^[0-9a-f]{64}$'
   then
     raise exception using errcode = '22023', message = 'STFLOW_RATE_CONFIG';
   end if;
@@ -43,16 +51,27 @@ begin
   delete from public.wallet_nonces where expires_at <= v_now;
 
   insert into public.metadata_rate_limits (
-    route, wallet, client_hash, window_started_at, request_count, expires_at
+    route, bucket_kind, bucket_key, window_started_at, request_count, expires_at
   ) values (
-    p_route, p_wallet, p_client_hash, v_window, 1,
+    p_route, 'wallet', p_wallet, v_window, 1,
     v_window + pg_catalog.make_interval(secs => p_window_seconds)
   )
-  on conflict (route, wallet, client_hash, window_started_at)
+  on conflict (route, bucket_kind, bucket_key, window_started_at)
   do update set request_count = public.metadata_rate_limits.request_count + 1
-  returning request_count into v_count;
+  returning request_count into v_wallet_count;
 
-  return v_count <= p_limit;
+  insert into public.metadata_rate_limits (
+    route, bucket_kind, bucket_key, window_started_at, request_count, expires_at
+  ) values (
+    p_route, 'client', p_client_hash, v_window, 1,
+    v_window + pg_catalog.make_interval(secs => p_window_seconds)
+  )
+  on conflict (route, bucket_kind, bucket_key, window_started_at)
+  do update set request_count = public.metadata_rate_limits.request_count + 1
+  returning request_count into v_client_count;
+
+  return v_client_count <= p_client_limit
+    and v_wallet_count <= p_wallet_limit;
 end;
 $$;
 
@@ -104,6 +123,10 @@ begin
     raise exception using errcode = 'P0001', message = 'STFLOW_NONCE_INVALID';
   end if;
 
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_registry_address || ':' || p_invoice_id, 0)
+  );
+
   select * into v_row
   from public.invoice_metadata
   where chain_id = p_chain_id
@@ -149,19 +172,16 @@ begin
   update public.wallet_nonces set consumed_at = v_now
   where wallet = p_wallet and nonce_hash = p_nonce_hash;
   return 'inserted';
-exception
-  when unique_violation then
-    raise exception using errcode = 'P0001', message = 'STFLOW_METADATA_CONFLICT';
 end;
 $$;
 
-revoke all on function public.consume_metadata_rate_limit(text,text,text,integer,integer)
+revoke all on function public.consume_metadata_rate_limit(text,text,text,integer,integer,integer)
   from public, anon, authenticated;
 revoke all on function public.persist_invoice_metadata(
   text,text,text,bigint,text,text,text,text,text,text,text,jsonb,text,numeric,numeric,
   numeric,text,bigint,integer
 ) from public, anon, authenticated;
-grant execute on function public.consume_metadata_rate_limit(text,text,text,integer,integer)
+grant execute on function public.consume_metadata_rate_limit(text,text,text,integer,integer,integer)
   to service_role;
 grant execute on function public.persist_invoice_metadata(
   text,text,text,bigint,text,text,text,text,text,text,text,jsonb,text,numeric,numeric,
