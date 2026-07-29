@@ -13,7 +13,8 @@ Supabase project before enabling the server routes.
    database password. Store the password in a password manager.
 2. Open **SQL Editor** and run
    `supabase/migrations/202607290001_arc_invoices.sql`, followed by
-   `supabase/migrations/202607290002_signed_metadata_rpc.sql`.
+   `supabase/migrations/202607290002_signed_metadata_rpc.sql`, then
+   `supabase/migrations/202607290003_chain_sync_rpc.sql`.
 3. Alternatively, link the Supabase CLI to the intended project and run:
 
    ```powershell
@@ -56,6 +57,12 @@ Because no remote project exists and neither migration has been applied, the
 reviewed `002` file may still change before first application. After it is
 applied anywhere, treat its checksum as immutable and add a new numbered
 migration for every later change.
+
+Migration `003` adds the service-role-only Arc event projection. It stores
+canonical block hashes and timestamps, locks the deployment cursor, and commits
+at most 2,000 blocks atomically. If a paid or cancelled event arrives before
+private metadata, later metadata persistence projects that terminal state
+instead of replacing contract state with `pending`.
 
 ## Verify database access
 
@@ -143,10 +150,22 @@ specific and must be set after deployment:
 
 ```text
 NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS=0x...
+INVOICE_REGISTRY_DEPLOYMENT_BLOCK=<verified deployment block>
+ARC_CONFIRMATION_DEPTH=12
+CRON_SECRET=<random server-only value of at least 32 characters>
 ```
 
 The registry address is public configuration. Verify it against the deployment
 transaction on ArcScan before adding it to local or Vercel settings.
+Set the deployment block from the same verified transaction. The checked-in
+Vercel cron calls `/api/internal/sync-chain` every minute. `CRON_SECRET` must
+match its bearer secret and must never use a `NEXT_PUBLIC_` prefix or appear in
+logs.
+
+After migration `003`, invoke the route once manually with
+`Authorization: Bearer <CRON_SECRET>`. Repeat it and also issue two concurrent
+requests. Both cases must remain idempotent: event identities stay unique and
+the locked cursor advances monotonically.
 
 ## Server invariants for the next tasks
 
@@ -259,3 +278,6 @@ After configuration:
    creates no duplicate processed event.
 6. Disconnect Supabase configuration in a non-production environment and
    confirm metadata writes fail instead of falling back to browser storage.
+7. In a disposable database only, replace the cursor hash with another valid
+   hash. Confirm sync returns HTTP 409 before scanning. Restore the database and
+   follow the documented bounded recovery; never automatically rewind.
