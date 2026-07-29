@@ -1,5 +1,5 @@
 create table public.invoice_metadata (
-  invoice_id text primary key
+  invoice_id text not null
     check (invoice_id ~ '^0x[0-9a-f]{64}$'),
   chain_id bigint not null default 5042002
     check (chain_id = 5042002),
@@ -26,14 +26,29 @@ create table public.invoice_metadata (
     check (metadata_hash ~ '^0x[0-9a-f]{64}$'),
   amount_raw numeric(39, 0) not null
     check (amount_raw > 0 and amount_raw <= 340282366920938463463374607431768211455),
-  created_chain_at bigint not null
-    check (created_chain_at > 0),
-  due_chain_at bigint not null
-    check (due_chain_at > created_chain_at),
-  paid_chain_at bigint
-    check (paid_chain_at is null or paid_chain_at >= created_chain_at),
-  cancelled_chain_at bigint
-    check (cancelled_chain_at is null or cancelled_chain_at >= created_chain_at),
+  created_chain_at numeric(20, 0) not null
+    check (created_chain_at between 0 and 18446744073709551615),
+  due_chain_at numeric(20, 0) not null
+    check (
+      due_chain_at between 0 and 18446744073709551615
+      and due_chain_at > created_chain_at
+    ),
+  paid_chain_at numeric(20, 0)
+    check (
+      paid_chain_at is null
+      or (
+        paid_chain_at between 0 and 18446744073709551615
+        and paid_chain_at >= created_chain_at
+      )
+    ),
+  cancelled_chain_at numeric(20, 0)
+    check (
+      cancelled_chain_at is null
+      or (
+        cancelled_chain_at between 0 and 18446744073709551615
+        and cancelled_chain_at >= created_chain_at
+      )
+    ),
   create_tx_hash text not null
     check (create_tx_hash ~ '^0x[0-9a-f]{64}$'),
   create_block_number bigint not null
@@ -56,6 +71,7 @@ create table public.invoice_metadata (
     check (cancellation_log_index is null or cancellation_log_index >= 0),
   inserted_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  primary key (chain_id, registry_address, invoice_id),
   unique (chain_id, registry_address, create_tx_hash, create_log_index),
   check (merchant_wallet <> payer_wallet),
   check (
@@ -117,6 +133,8 @@ create table public.chain_sync_cursor (
     check (registry_address ~ '^0x[0-9a-f]{40}$'),
   last_confirmed_block bigint not null
     check (last_confirmed_block >= 0),
+  last_confirmed_block_hash text not null
+    check (last_confirmed_block_hash ~ '^0x[0-9a-f]{64}$'),
   updated_at timestamptz not null default now(),
   primary key (chain_id, registry_address)
 );
@@ -141,16 +159,46 @@ create table public.processed_chain_events (
 );
 
 create index invoice_metadata_merchant_idx
-  on public.invoice_metadata (merchant_wallet, indexed_status, create_block_number desc);
+  on public.invoice_metadata (
+    chain_id,
+    registry_address,
+    merchant_wallet,
+    indexed_status,
+    create_block_number desc
+  );
 create index invoice_metadata_payer_idx
-  on public.invoice_metadata (payer_wallet, indexed_status, create_block_number desc);
+  on public.invoice_metadata (
+    chain_id,
+    registry_address,
+    payer_wallet,
+    indexed_status,
+    create_block_number desc
+  );
 create index invoice_metadata_status_idx
-  on public.invoice_metadata (indexed_status, create_block_number desc);
+  on public.invoice_metadata (
+    chain_id,
+    registry_address,
+    indexed_status,
+    create_block_number desc
+  );
 create index wallet_nonces_expiry_idx
   on public.wallet_nonces (expires_at)
   where consumed_at is null;
 create index processed_chain_events_invoice_idx
-  on public.processed_chain_events (invoice_id, block_number, log_index);
+  on public.processed_chain_events (
+    chain_id,
+    registry_address,
+    invoice_id,
+    block_number,
+    log_index
+  );
+create index processed_chain_events_block_idx
+  on public.processed_chain_events (
+    chain_id,
+    registry_address,
+    block_number,
+    log_index
+  );
 
 create function public.set_updated_at()
 returns trigger

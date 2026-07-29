@@ -34,6 +34,17 @@ The migration creates:
 Arc timestamps are stored as integer Unix seconds from the chain. USDC amounts
 are stored as raw 6-decimal integers, not floating-point values.
 
+The same invoice ID may exist in different registry deployments. Every server
+query and mutation must identify a row by `(chain_id, registry_address,
+invoice_id)`, and list queries must filter on the configured active registry.
+Historical registry rows remain available for reconciliation after an upgrade.
+Processed events carry the same chain, registry, and invoice identity. They do
+not use a foreign key because the indexer may observe a valid onchain invoice
+whose private metadata was never submitted.
+
+This migration is intentionally one-time rather than idempotent. Apply it once
+to a new database and use a new numbered migration for later schema changes.
+
 ## Verify database access
 
 In **Table Editor**, confirm Row Level Security is enabled for all four tables
@@ -69,7 +80,13 @@ where table_schema = 'public'
 
 The first query must show `true` for both RLS columns. The second query must
 return no rows. The migration intentionally creates no permissive browser
-policy; all reads and writes go through authenticated server routes.
+policy.
+
+Production `/api/v1` metadata and signed-wallet routes do not exist yet; they
+are delivered by the next implementation tasks. Existing legacy routes are not
+an acceptable production path and must not receive the service-role key. Until
+the server routes, receipt verification, and strict runtime configuration are
+implemented and tested, database-backed metadata writes remain disabled.
 
 ## Configure server secrets
 
@@ -81,14 +98,16 @@ SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
 ```
 
-Never prefix either variable with `NEXT_PUBLIC_`. Never place the service-role
-key in browser code, Git, screenshots, issue trackers, or chat. If a key is
-exposed, rotate it immediately in Supabase, replace it in every server
+Never prefix either variable with `NEXT_PUBLIC_`. Public Supabase URL or anon
+variables are not required by this server-only design. Never place the
+service-role key in browser code, Git, screenshots, issue trackers, or chat. If
+a key is exposed, rotate it immediately in Supabase, replace it in every server
 environment, and redeploy.
 
 Use separate Supabase projects and keys for local/test and production
-environments. Production server routes must fail closed when either variable is
-missing.
+environments. The target production routes must fail closed when either
+variable is missing. That behavior is not complete until the strict runtime
+configuration task is implemented and verified.
 
 ## Configure Arc
 
@@ -112,6 +131,69 @@ NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS=0x...
 The registry address is public configuration. Verify it against the deployment
 transaction on ArcScan before adding it to local or Vercel settings.
 
+## Server invariants for the next tasks
+
+Normalize every EVM address, bytes32 value, and transaction hash to lowercase
+before a database query or mutation. The database rejects mixed-case values;
+tests must cover that server/indexer normalization rather than relying on the
+database to transform input.
+
+Before inserting metadata, the server must:
+
+1. Decode and validate the canonical metadata object against an explicit
+   schema.
+2. Reject a request body larger than 96 KiB before JSON parsing. Serialize the
+   validated metadata deterministically, reject canonical metadata larger than
+   64 KiB, and recompute its keccak256 metadata hash.
+3. Fetch the confirmed Arc receipt and compare the registry, invoice ID,
+   merchant, payer, raw amount, deadline, and recomputed metadata hash with the
+   `InvoiceCreated` event.
+4. Upsert by `(chain_id, registry_address, invoice_id)` only after every
+   comparison succeeds.
+
+Do not trust a browser-supplied canonical JSON string or metadata hash.
+
+Store only a digest of each random nonce. A challenge must bind the wallet,
+action, chain ID, registry address, issued time, expiry, nonce, and the payload
+or metadata hash being authorized. After signature verification, authorization
+must depend on a single atomic conditional nonce consume; never use a
+select-then-update sequence. Implement the consume as a server-only database
+function whose transaction contains a statement equivalent to:
+
+```sql
+update public.wallet_nonces
+set consumed_at = now()
+where wallet = :wallet
+  and nonce_hash = :nonce_hash
+  and action = :action
+  and consumed_at is null
+  and expires_at > now()
+returning wallet;
+```
+
+Exactly one returned row is required. Signature verification alone does not
+consume a challenge, and a consumed or expired challenge must fail.
+
+The chain indexer must lock the matching `chain_sync_cursor` row with
+`FOR UPDATE`, fetch a bounded confirmed range, and sort logs by block number,
+transaction index, then log index. Applying event mutations, inserting
+`processed_chain_events`, and advancing the cursor must commit atomically in
+the same transaction. Duplicate event keys must be harmless without skipping
+the associated state transition.
+
+Use a documented confirmation depth before indexing. Persist the confirmed
+block hash with the cursor and compare it with Arc before processing the next
+range. Derive event times from the corresponding Arc block timestamp, not
+server wall-clock time. A mismatched block hash must stop cursor advancement,
+rewind to the last known canonical block, and replay the affected range.
+Provide an operator-controlled backfill path for new deployments and recovery;
+it must use the same ordered, idempotent transaction logic.
+
+`indexed_status = 'pending'` mirrors the contract enum. Expiry is a read-time
+state derived from a pending invoice whose `due_chain_at` is at or before the
+current confirmed chain time; the indexer must not persist `expired` as a
+contract status.
+
 ## Smoke verification after setup
 
 Remote verification remains pending until the project and registry exist.
@@ -122,8 +204,9 @@ After configuration:
 2. Confirm one normalized metadata row exists with the same invoice ID,
    registry address, transaction hash, block number, log index, amount, payer,
    merchant, deadline, and metadata hash.
-3. Request the invoice through the server API and confirm no service-role key is
-   present in the browser network response or JavaScript bundle.
+3. After the production `/api/v1` route is implemented, request the invoice
+   through it and confirm no service-role key is present in the browser network
+   response or JavaScript bundle.
 4. Pay from the assigned payer wallet. Confirm the index changes to `paid` only
    after the Arc transaction succeeds.
 5. Run the chain sync twice over the same block range. Confirm the second run
