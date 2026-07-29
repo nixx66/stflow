@@ -41,6 +41,18 @@ test("trims every metadata field in canonical JSON", () => {
   );
 });
 
+test("matches the canonical metadata hash vector", () => {
+  assert.equal(
+    hashInvoiceMetadata({
+      customerName: "  Builder team ",
+      title: "\tJuly invoice",
+      description: "Arc settlement\n",
+      memo: " Thanks "
+    }),
+    "0x2a3afda7234a6ff6cf4704aedd9f434df7e6c4d3c65a27c0c86bc11613169d58"
+  );
+});
+
 test("derives a stable bytes32 invoice id with Solidity ABI encoding", () => {
   assert.equal(
     invoiceIdFromReference(MERCHANT, REFERENCE_ID),
