@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  copyWalletAddress,
   getMerchantWalletDisplay,
   getWalletConnectionLabel,
   getWalletNetworkLabel,
@@ -48,4 +49,22 @@ test("shows the connected merchant wallet only after wallet connection", () => {
       isConnected: true
     }
   );
+});
+
+test("copies the connected wallet address", async () => {
+  const writes: string[] = [];
+  const copied = await copyWalletAddress("0x742d35Cc6634C0532925a3b844Bc454e4438f44e", async (value) => {
+    writes.push(value);
+  });
+
+  assert.equal(copied, true);
+  assert.deepEqual(writes, ["0x742d35Cc6634C0532925a3b844Bc454e4438f44e"]);
+});
+
+test("reports clipboard failures without swallowing the wallet flow", async () => {
+  const copied = await copyWalletAddress("0x742d35Cc6634C0532925a3b844Bc454e4438f44e", async () => {
+    throw new Error("Clipboard unavailable");
+  });
+
+  assert.equal(copied, false);
 });

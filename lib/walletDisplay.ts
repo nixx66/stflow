@@ -14,6 +14,18 @@ export function getWalletNetworkLabel(chainId: number | undefined, targetChainId
   return chainId === targetChainId ? "Testnet ready" : "Switch to Testnet";
 }
 
+export async function copyWalletAddress(
+  address: string,
+  writeText: (value: string) => Promise<void>
+) {
+  try {
+    await writeText(address);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function getMerchantWalletDisplay({
   connectedWallet,
   livePayment
