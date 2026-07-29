@@ -1,4 +1,5 @@
 import { CheckCircle2, Copy, Link2, ReceiptText } from "lucide-react";
+import { getArcExplorerTxUrl } from "@/lib/arc";
 import { copyToClipboard } from "@/lib/format";
 import { Invoice } from "@/types/invoice";
 
@@ -22,10 +23,12 @@ const previewItems = [
 
 type InvoiceCreatedProps = {
   invoice?: Invoice;
+  metadataPending?: boolean;
   paymentLink: string;
+  txHash?: string;
 };
 
-export function InvoiceCreated({ invoice, paymentLink }: InvoiceCreatedProps) {
+export function InvoiceCreated({ invoice, metadataPending, paymentLink, txHash }: InvoiceCreatedProps) {
   return (
     <section className="rounded-[2rem] border border-white/75 bg-white/70 p-4 shadow-[0_22px_70px_rgba(4,41,31,0.08)] backdrop-blur-2xl lg:col-span-2">
       <p className="text-xs font-black uppercase tracking-[0.16em] text-[#0fa86b]">After creation</p>
@@ -57,6 +60,9 @@ export function InvoiceCreated({ invoice, paymentLink }: InvoiceCreatedProps) {
               <p className="mt-2 break-all rounded-2xl bg-white/70 px-4 py-3 font-mono text-sm font-bold text-ink">
                 {paymentLink}
               </p>
+              <p className="mt-2 break-all font-mono text-xs font-bold text-[#667085]">
+                Invoice ID: {invoice.id}
+              </p>
             </div>
             <div className="grid shrink-0 gap-3">
               <button
@@ -67,8 +73,23 @@ export function InvoiceCreated({ invoice, paymentLink }: InvoiceCreatedProps) {
                 <Copy className="h-4 w-4" />
                 Copy link
               </button>
+              {txHash ? (
+                <a
+                  className="inline-flex h-11 items-center justify-center rounded-full bg-[#063f2c] px-4 text-sm font-black text-white transition hover:bg-[#0b5d43] active:translate-y-px"
+                  href={getArcExplorerTxUrl(txHash)}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  View on Arcscan
+                </a>
+              ) : null}
             </div>
           </div>
+          {metadataPending ? (
+            <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+              The invoice is confirmed onchain. Metadata saving is pending; keep the transaction link for recovery.
+            </p>
+          ) : null}
           <p className="mt-3 text-sm font-bold leading-6 text-[#667085]">
             Send this link to the payer wallet. Merchant wallets can review the invoice, but cannot complete their own checkout.
           </p>

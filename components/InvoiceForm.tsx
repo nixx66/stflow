@@ -2,11 +2,10 @@
 
 import { CheckCircle2, Link2, ShieldCheck } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
+import { getAddress } from "viem";
 import { useAccount } from "wagmi";
-import { useInvoices } from "@/hooks/useInvoice";
+import { useCreateInvoice } from "@/hooks/useCreateInvoice";
 import { isValidInvoiceWalletAddress } from "@/lib/invoiceCreateReadiness";
-import { MOCK_MERCHANT_A } from "@/lib/mockData";
-import { getPaymentMode, isLivePaymentMode } from "@/lib/paymentMode";
 import { buildSharedInvoicePayUrl } from "@/lib/sharedInvoiceLink";
 import { getMerchantWalletDisplay } from "@/lib/walletDisplay";
 import { Invoice } from "@/types/invoice";
@@ -42,16 +41,15 @@ const initialForm: InvoiceFormValues = {
 };
 
 export function InvoiceForm() {
-  const { createInvoice } = useInvoices();
+  const { createInvoice, configError, state } = useCreateInvoice();
   const { address: connectedMerchantWallet } = useAccount();
-  const paymentMode = getPaymentMode();
-  const livePayment = isLivePaymentMode(paymentMode);
-  const merchantWallet = livePayment && connectedMerchantWallet ? connectedMerchantWallet : MOCK_MERCHANT_A;
   const merchantWalletDisplay = getMerchantWalletDisplay({
     connectedWallet: connectedMerchantWallet,
-    livePayment
+    livePayment: true
   });
   const [createdInvoice, setCreatedInvoice] = useState<Invoice>();
+  const [metadataPending, setMetadataPending] = useState(false);
+  const [creationTxHash, setCreationTxHash] = useState<string>();
   const [formError, setFormError] = useState<string>();
   const [form, setForm] = useState(initialForm);
 
@@ -70,7 +68,7 @@ export function InvoiceForm() {
     setForm((current) => ({ ...current, [name]: value }));
   };
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setFormError(undefined);
 
@@ -79,8 +77,13 @@ export function InvoiceForm() {
       return;
     }
 
-    if (livePayment && !connectedMerchantWallet) {
-      setFormError("Connect the merchant wallet before creating a live invoice.");
+    if (configError) {
+      setFormError(configError);
+      return;
+    }
+
+    if (!connectedMerchantWallet) {
+      setFormError("Connect the merchant wallet before creating an invoice.");
       return;
     }
 
@@ -96,23 +99,31 @@ export function InvoiceForm() {
       return;
     }
 
-    if (payerWallet.toLowerCase() === merchantWallet.toLowerCase()) {
+    if (payerWallet.toLowerCase() === connectedMerchantWallet.toLowerCase()) {
       setFormError("Payer wallet must be different from the merchant wallet.");
       return;
     }
 
-    const invoice = createInvoice({
-      merchantWallet,
-      customerName: form.customerName,
-      customerWallet: payerWallet,
-      title: form.title,
-      amount: form.amount,
-      description: form.description,
-      memo: form.memo,
-      expiresAt: form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined
-    });
-    setCreatedInvoice(invoice);
+    try {
+      const result = await createInvoice({
+        payer: getAddress(payerWallet),
+        customerName: form.customerName,
+        title: form.title,
+        amount: form.amount,
+        description: form.description,
+        memo: form.memo,
+        expiresAt: form.expiresAt
+      });
+      setCreatedInvoice(result.invoice);
+      setCreationTxHash(result.txHash);
+      setMetadataPending(result.metadataPending);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Unable to create the invoice.");
+    }
   };
+
+  const submitting = state.stage === "signing" || state.stage === "confirming";
+  const displayedError = formError ?? configError;
 
   return (
     <div className="sf-invoice-shell mx-auto max-w-[1680px] rounded-[2.5rem] border border-white/60 bg-white/35 p-3 shadow-[0_40px_120px_rgba(4,41,31,0.12)] backdrop-blur-2xl">
@@ -162,13 +173,25 @@ export function InvoiceForm() {
 
         <InvoiceFields
           change={change}
+          disabled={Boolean(configError) || submitting}
           form={form}
-          formError={formError}
-          livePayment={livePayment}
+          formError={displayedError}
           merchantWalletDisplay={merchantWalletDisplay}
           minExpireAt={minExpireAt}
+          submitLabel={
+            state.stage === "signing"
+              ? "Confirm in wallet"
+              : state.stage === "confirming"
+                ? "Confirming on Arc"
+                : "Create invoice"
+          }
         />
-        <InvoiceCreated invoice={createdInvoice} paymentLink={paymentLink} />
+        <InvoiceCreated
+          invoice={createdInvoice}
+          metadataPending={metadataPending}
+          paymentLink={paymentLink}
+          txHash={creationTxHash}
+        />
       </form>
     </div>
   );

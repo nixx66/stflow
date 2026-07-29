@@ -13,22 +13,23 @@ export type InvoiceFormValues = {
 
 type InvoiceFieldsProps = {
   change: (name: keyof InvoiceFormValues, value: string) => void;
+  disabled?: boolean;
   form: InvoiceFormValues;
   formError?: string;
-  livePayment: boolean;
   merchantWalletDisplay: {
     badge: string;
     detail: string;
     isConnected: boolean;
   };
   minExpireAt: string;
+  submitLabel?: string;
 };
 
 const fieldClass =
   "mt-2 h-12 min-w-0 w-full rounded-[1.05rem] border border-[#e6e2d8] bg-white/90 px-4 text-base font-black text-ink outline-none transition placeholder:text-[#b7b8b0] focus:border-[#0fa86b] focus:ring-4 focus:ring-[#dff4e5]";
 const labelClass = "text-xs font-black uppercase tracking-[0.13em] text-muted";
 
-export function InvoiceFields({ change, form, formError, livePayment, merchantWalletDisplay, minExpireAt }: InvoiceFieldsProps) {
+export function InvoiceFields({ change, disabled, form, formError, merchantWalletDisplay, minExpireAt, submitLabel = "Create invoice" }: InvoiceFieldsProps) {
   return (
     <section className="sf-float-card relative overflow-hidden rounded-[2.15rem] border border-white/75 bg-white/80 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.92),0_34px_100px_rgba(4,41,31,0.12)] backdrop-blur-2xl sm:p-5 xl:p-6">
       <div className="pointer-events-none absolute right-5 top-5 h-24 w-24 rounded-full bg-[#a8ef72]/20 blur-2xl" />
@@ -56,13 +57,7 @@ export function InvoiceFields({ change, form, formError, livePayment, merchantWa
               </p>
             </div>
           </div>
-          {livePayment ? (
-            <WalletConnectControl label="Change wallet" size="sm" tone="light" />
-          ) : (
-            <span className="inline-flex h-10 w-fit items-center rounded-full bg-white px-4 text-sm font-black text-[#063f2c] ring-1 ring-[#e6e2d8]">
-              Testnet demo
-            </span>
-          )}
+          <WalletConnectControl label="Change wallet" size="sm" tone="light" />
         </div>
 
         <div className="grid min-w-0 gap-4 md:grid-cols-2">
@@ -164,9 +159,10 @@ export function InvoiceFields({ change, form, formError, livePayment, merchantWa
 
         <button
           className="sf-button-shine inline-flex h-12 w-full items-center justify-center rounded-[1rem] bg-[linear-gradient(135deg,#0fa86b,#063f2c)] px-5 text-base font-black text-white shadow-[0_18px_45px_rgba(15,168,107,0.24)] transition hover:-translate-y-0.5 hover:shadow-[0_24px_58px_rgba(15,168,107,0.32)] active:translate-y-px disabled:cursor-not-allowed disabled:bg-white/25 disabled:text-white/50"
+          disabled={disabled}
           type="submit"
         >
-          Create invoice
+          {submitLabel}
         </button>
 
         <p className="text-center text-xs font-bold text-muted">

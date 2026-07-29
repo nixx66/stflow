@@ -12,6 +12,7 @@ export type Invoice = {
   amount: string;
   currency: "USDC";
   status: InvoiceStatus;
+  creationTxHash?: string;
   paymentTxHash?: string;
   chainId: number;
   createdAt: string;
