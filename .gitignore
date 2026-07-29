@@ -4,6 +4,7 @@ node_modules/
 *.tsbuildinfo
 *.log
 .stflow-data/
+.stflow-deployment/
 
 .env
 .env.local
