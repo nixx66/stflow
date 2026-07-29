@@ -212,6 +212,25 @@ export function parseRpcResult(
   throw new SyncDatabaseError();
 }
 
+export function isRangeLimitError(error: unknown, depth = 0): boolean {
+  if (depth > 4 || typeof error !== "object" || error === null) return false;
+  const value = error as {
+    code?: unknown;
+    status?: unknown;
+    message?: unknown;
+    cause?: unknown;
+  };
+  if (value.code === -32005 || value.status === 413) return true;
+  if (
+    value.code === -32602 &&
+    typeof value.message === "string" &&
+    /(?:block\s+range|range.{0,20}limit|too many blocks)/i.test(value.message)
+  ) {
+    return true;
+  }
+  return isRangeLimitError(value.cause, depth + 1);
+}
+
 export function authorizeCron(header: string | null, secret: string) {
   const supplied =
     header?.startsWith("Bearer ") && header.length > 7 ? header.slice(7) : "";
@@ -312,7 +331,15 @@ export async function syncInvoiceEvents(
   let targetBefore: ChainBlock;
   while (true) {
     targetBefore = await deps.chain.getBlock({ blockNumber: toBlock });
-    logs = await deps.chain.getLogs({ fromBlock, toBlock });
+    try {
+      logs = await deps.chain.getLogs({ fromBlock, toBlock });
+    } catch (error) {
+      if (!isRangeLimitError(error)) throw error;
+      if (toBlock === fromBlock) throw new SyncBatchOverflowError();
+      const size = toBlock - fromBlock + 1n;
+      toBlock = fromBlock + size / 2n - 1n;
+      continue;
+    }
     if (
       logs.some(
         (log) =>

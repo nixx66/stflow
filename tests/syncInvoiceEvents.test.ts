@@ -5,6 +5,7 @@ import {
   ReorgError,
   SyncConfigError,
   authorizeCron,
+  isRangeLimitError,
   parseRpcResult,
   parseSyncConfig,
   projectMetadataStatus,
@@ -107,6 +108,21 @@ test("accepts only exact database RPC result values", () => {
   }
 });
 
+test("recognizes only explicit provider range-limit failures", () => {
+  assert.equal(isRangeLimitError({ code: -32005 }), true);
+  assert.equal(isRangeLimitError({ status: 413 }), true);
+  assert.equal(
+    isRangeLimitError({
+      code: -32602,
+      message: "requested block range exceeds provider limit"
+    }),
+    true
+  );
+  assert.equal(isRangeLimitError({ code: -32602, message: "invalid address" }), false);
+  assert.equal(isRangeLimitError({ status: 429 }), false);
+  assert.equal(isRangeLimitError(new Error("network timeout")), false);
+});
+
 test("uses constant-time cron authorization without accepting malformed headers", () => {
   const secret = "0123456789abcdef0123456789abcdef";
   assert.equal(authorizeCron(`Bearer ${secret}`, secret), true);
@@ -164,6 +180,37 @@ test("shrinks an oversized event range until the batch is within the SQL cap", a
       }
     },
     decodeLogs: async () => []
+  });
+  const result = await syncInvoiceEvents(
+    { deploymentBlock: 100n, confirmationDepth: 12n },
+    deps
+  );
+  assert.deepEqual(ranges, [
+    [101n, 2100n],
+    [101n, 1100n]
+  ]);
+  assert.equal(result.toBlock, 1100n);
+  assert.equal(calls.apply.length, 1);
+});
+
+test("shrinks and refetches after an explicit provider range-cap error", async () => {
+  const ranges: Array<[bigint, bigint]> = [];
+  const { deps, calls } = harness({
+    chain: {
+      getBlockNumber: async () => 5000n,
+      getBlock: async ({ blockNumber }) => ({
+        number: blockNumber,
+        hash: blockNumber === 100n ? hash("6") : hash("7"),
+        timestamp: 1000n
+      }),
+      getLogs: async ({ fromBlock, toBlock }) => {
+        ranges.push([fromBlock, toBlock]);
+        if (toBlock - fromBlock + 1n > 1000n) {
+          throw { code: -32005 };
+        }
+        return [];
+      }
+    }
   });
   const result = await syncInvoiceEvents(
     { deploymentBlock: 100n, confirmationDepth: 12n },
@@ -445,6 +492,36 @@ test("shared invoice lock serializes event insertion before metadata reconciliat
   assert.equal(persisted, "paid");
 });
 
+test("an identical duplicate event heals pending metadata idempotently", () => {
+  const events = new Set<string>();
+  let status: "pending" | "paid" = "pending";
+  const apply = (event: ChainEvent) => {
+    const key = `${event.txHash}:${event.logIndex}`;
+    events.add(key);
+    if (event.eventName === "InvoicePaid" && status === "pending") {
+      status = "paid";
+    }
+  };
+  const paid: ChainEvent = {
+    eventName: "InvoicePaid",
+    invoiceId: created.invoiceId,
+    merchant: created.merchant,
+    payer: created.payer,
+    amountRaw: created.amountRaw,
+    txHash: hash("a"),
+    blockHash: hash("b"),
+    blockNumber: 110n,
+    transactionIndex: 0,
+    logIndex: 2,
+    blockTimestamp: "1500"
+  };
+  apply(paid);
+  status = "pending";
+  apply(paid);
+  assert.equal(events.size, 1);
+  assert.equal(status, "paid");
+});
+
 test("migration installs an atomic service-only event projection", async () => {
   const sql = await readFile(
     "supabase/migrations/202607290003_chain_sync_rpc.sql",
@@ -457,6 +534,11 @@ test("migration installs an atomic service-only event projection", async () => {
   assert.match(sql, /for update/i);
   assert.match(sql, /jsonb_array_elements[\s\S]*with ordinality/i);
   assert.match(sql, /p_events is null/i);
+  assert.match(sql, /v_previous_tx_hash text/i);
+  assert.match(
+    sql,
+    /v_log_index = v_previous_log[\s\S]*v_tx_hash <> v_previous_tx_hash/i
+  );
   assert.match(sql, /STFLOW_SYNC_RANGE/i);
   assert.match(sql, /STFLOW_SYNC_CURSOR/i);
   assert.match(sql, /STFLOW_EVENT_CONFLICT/i);
@@ -471,6 +553,14 @@ test("migration installs an atomic service-only event projection", async () => {
   assert.match(
     sql,
     /if found then[\s\S]*processed_chain_events[\s\S]*indexed_status = 'paid'/i
+  );
+  const duplicateBranch = sql.match(
+    /if not pg_catalog\.coalesce\(v_inserted, false\) then([\s\S]*?)end if;/
+  )?.[1] ?? "";
+  assert.doesNotMatch(duplicateBranch, /\bcontinue\s*;/i);
+  assert.match(
+    sql,
+    /indexed_status = 'paid'[\s\S]*payment_tx_hash = v_tx_hash[\s\S]*payment_log_index = v_log_index/i
   );
   assert.match(sql, /grant execute[\s\S]*to service_role/i);
   assert.match(sql, /revoke all[\s\S]*from public, anon, authenticated/i);

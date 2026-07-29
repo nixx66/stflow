@@ -126,6 +126,7 @@ declare
   v_previous_block bigint := -1;
   v_previous_tx integer := -1;
   v_previous_log integer := -1;
+  v_previous_tx_hash text;
   v_inserted boolean;
   v_metadata public.invoice_metadata%rowtype;
   v_created public.processed_chain_events%rowtype;
@@ -229,7 +230,12 @@ begin
       or v_timestamp not between 0 and 18446744073709551615
       or (v_block = v_previous_block and (
         v_tx_index < v_previous_tx
-        or (v_tx_index = v_previous_tx and v_log_index <= v_previous_log)
+        or (v_tx_index = v_previous_tx and v_log_index < v_previous_log)
+        or (
+          v_tx_index = v_previous_tx
+          and v_log_index = v_previous_log
+          and v_tx_hash <> v_previous_tx_hash
+        )
       ))
       or v_block < v_previous_block
     then
@@ -277,6 +283,7 @@ begin
     v_previous_block := v_block;
     v_previous_tx := v_tx_index;
     v_previous_log := v_log_index;
+    v_previous_tx_hash := v_tx_hash;
 
     perform pg_catalog.pg_advisory_xact_lock(
       pg_catalog.hashtextextended(p_registry_address || ':' || v_invoice_id, 0)
@@ -317,7 +324,6 @@ begin
       if not v_inserted then
         raise exception using errcode = 'P0001', message = 'STFLOW_EVENT_CONFLICT';
       end if;
-      continue;
     end if;
 
     if (
@@ -390,34 +396,53 @@ begin
     if v_metadata.invoice_id is null then
       continue;
     end if;
-    if v_metadata.indexed_status <> 'pending'
-      or v_metadata.merchant_wallet <> v_created.merchant_wallet
+    if v_metadata.merchant_wallet <> v_created.merchant_wallet
       or v_metadata.payer_wallet <> v_created.payer_wallet
       or v_metadata.amount_raw <> v_created.amount_raw
     then
       raise exception using errcode = 'P0001', message = 'STFLOW_EVENT_CONFLICT';
     end if;
 
-    if v_name = 'InvoicePaid' then
-      update public.invoice_metadata set
-        indexed_status = 'paid',
-        paid_chain_at = v_timestamp,
-        payment_tx_hash = v_tx_hash,
-        payment_block_number = v_block,
-        payment_log_index = v_log_index
-      where chain_id = p_chain_id
-        and registry_address = p_registry_address
-        and invoice_id = v_invoice_id;
+    if v_metadata.indexed_status = 'pending' then
+      if v_name = 'InvoicePaid' then
+        update public.invoice_metadata set
+          indexed_status = 'paid',
+          paid_chain_at = v_timestamp,
+          payment_tx_hash = v_tx_hash,
+          payment_block_number = v_block,
+          payment_log_index = v_log_index
+        where chain_id = p_chain_id
+          and registry_address = p_registry_address
+          and invoice_id = v_invoice_id;
+      else
+        update public.invoice_metadata set
+          indexed_status = 'cancelled',
+          cancelled_chain_at = v_timestamp,
+          cancellation_tx_hash = v_tx_hash,
+          cancellation_block_number = v_block,
+          cancellation_log_index = v_log_index
+        where chain_id = p_chain_id
+          and registry_address = p_registry_address
+          and invoice_id = v_invoice_id;
+      end if;
+    elsif (
+      v_name = 'InvoicePaid'
+      and v_metadata.indexed_status = 'paid'
+      and v_metadata.payment_tx_hash = v_tx_hash
+      and v_metadata.payment_block_number = v_block
+      and v_metadata.payment_log_index = v_log_index
+      and v_metadata.paid_chain_at = v_timestamp
+    ) or (
+      v_name = 'InvoiceCancelled'
+      and v_metadata.indexed_status = 'cancelled'
+      and v_metadata.cancellation_tx_hash = v_tx_hash
+      and v_metadata.cancellation_block_number = v_block
+      and v_metadata.cancellation_log_index = v_log_index
+      and v_metadata.cancelled_chain_at = v_timestamp
+    ) then
+      null;
     else
-      update public.invoice_metadata set
-        indexed_status = 'cancelled',
-        cancelled_chain_at = v_timestamp,
-        cancellation_tx_hash = v_tx_hash,
-        cancellation_block_number = v_block,
-        cancellation_log_index = v_log_index
-      where chain_id = p_chain_id
-        and registry_address = p_registry_address
-        and invoice_id = v_invoice_id;
+      raise exception using errcode = 'P0001', message = 'STFLOW_EVENT_CONFLICT';
     end if;
   end loop;
 
