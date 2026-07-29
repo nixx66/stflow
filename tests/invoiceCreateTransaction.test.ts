@@ -10,6 +10,7 @@ import {
 } from "viem";
 import {
   createReferenceId,
+  beginCreateRequest,
   invoiceCreatedEvent,
   nextCreateStage,
   parseInvoiceAmount,
@@ -24,6 +25,8 @@ const PAYER = "0x3333333333333333333333333333333333333333";
 const ID = `0x${"44".repeat(32)}` as Hex;
 const HASH = `0x${"55".repeat(32)}` as Hex;
 const TX_HASH = `0x${"66".repeat(32)}` as Hex;
+const REQUEST_A = `0x${"77".repeat(32)}` as Hex;
+const REQUEST_B = `0x${"88".repeat(32)}` as Hex;
 
 const expected = {
   id: ID,
@@ -57,7 +60,9 @@ function createdLog(overrides: Partial<typeof expected> = {}, address: Address =
 test("moves through signing, confirming, and saved stages", () => {
   assert.equal(nextCreateStage("idle", "wallet_requested"), "signing");
   assert.equal(nextCreateStage("signing", "hash_received"), "confirming");
-  assert.equal(nextCreateStage("confirming", "receipt_confirmed"), "saved");
+  assert.equal(nextCreateStage("confirming", "receipt_confirmed"), "persisting");
+  assert.equal(nextCreateStage("persisting", "metadata_saved"), "saved");
+  assert.equal(nextCreateStage("persisting", "metadata_failed"), "saved");
   assert.equal(nextCreateStage("confirming", "receipt_reverted"), "error");
 });
 
@@ -73,6 +78,14 @@ test("allows another creation attempt after success or error", () => {
   assert.equal(nextCreateStage("error", "wallet_requested"), "signing");
 });
 
+test("rejects a duplicate start while another creation owns the mutex", () => {
+  assert.equal(beginCreateRequest(undefined, REQUEST_A), REQUEST_A);
+  assert.throws(
+    () => beginCreateRequest(REQUEST_A, REQUEST_B),
+    /already in progress/
+  );
+});
+
 test("parses USDC amounts without floating-point conversion", () => {
   assert.equal(parseInvoiceAmount("250.000001"), BigInt(250_000001));
   assert.equal(parseInvoiceAmount("0.000001"), BigInt(1));
@@ -82,6 +95,17 @@ test("rejects empty, signed, exponential, zero, and over-precise amounts", () =>
   for (const amount of ["", "-1", "+1", "1e3", "0", "0.0000001", "1."]) {
     assert.throws(() => parseInvoiceAmount(amount), /valid USDC amount/);
   }
+});
+
+test("accepts the uint128 amount boundary and rejects one micro-USDC above it", () => {
+  assert.equal(
+    parseInvoiceAmount("340282366920938463463374607431768.211455"),
+    (BigInt(1) << BigInt(128)) - BigInt(1)
+  );
+  assert.throws(
+    () => parseInvoiceAmount("340282366920938463463374607431768.211456"),
+    /valid USDC amount/
+  );
 });
 
 test("parses a future invoice deadline as uint64 seconds", () => {
@@ -192,14 +216,17 @@ test("rejects every mismatched creation event field", () => {
 test("retains the transaction and invoice when metadata persistence fails", () => {
   const confirming = {
     stage: "confirming" as const,
+    requestId: REQUEST_A,
     txHash: TX_HASH
   };
   const saved = reduceCreateState(confirming, {
     type: "receipt_confirmed",
+    requestId: REQUEST_A,
     invoice: expected
   });
   const pending = reduceCreateState(saved, {
     type: "metadata_failed",
+    requestId: REQUEST_A,
     error: "Metadata service unavailable"
   });
 
@@ -208,6 +235,49 @@ test("retains the transaction and invoice when metadata persistence fails", () =
   assert.deepEqual(pending.invoice, expected);
   assert.equal(pending.metadataPending, true);
   assert.equal(pending.error, "Metadata service unavailable");
+});
+
+test("keeps receipt confirmation busy until metadata reaches a terminal result", () => {
+  const state = reduceCreateState(
+    { stage: "confirming", requestId: REQUEST_A, txHash: TX_HASH },
+    { type: "receipt_confirmed", requestId: REQUEST_A, invoice: expected }
+  );
+
+  assert.equal(state.stage, "persisting");
+  assert.equal(state.metadataPending, true);
+});
+
+test("ignores stale actions from an older request", () => {
+  const current = {
+    stage: "signing" as const,
+    requestId: REQUEST_B
+  };
+  const stale = reduceCreateState(current, {
+    type: "hash_received",
+    requestId: REQUEST_A,
+    txHash: TX_HASH
+  });
+
+  assert.equal(stale, current);
+});
+
+test("preserves confirmed transaction recovery data when a retry starts", () => {
+  const retry = reduceCreateState(
+    {
+      stage: "saved",
+      requestId: REQUEST_A,
+      txHash: TX_HASH,
+      invoice: expected,
+      metadataPending: true,
+      error: "Metadata service unavailable"
+    },
+    { type: "wallet_requested", requestId: REQUEST_B }
+  );
+
+  assert.equal(retry.stage, "signing");
+  assert.equal(retry.txHash, undefined);
+  assert.equal(retry.recovery?.txHash, TX_HASH);
+  assert.deepEqual(retry.recovery?.invoice, expected);
 });
 
 test("creation flow is chain-backed and isolated from the legacy invoice route", async () => {
@@ -219,8 +289,16 @@ test("creation flow is chain-backed and isolated from the legacy invoice route",
 
   assert.match(hook, /createInvoice/);
   assert.match(hook, /waitForTransactionReceipt/);
+  assert.match(hook, /useRef/);
+  assert.match(hook, /activeRequest/);
+  assert.match(hook, /getAccount|getChainId/);
   assert.match(hook, /\/api\/v1\/invoices\/metadata/);
   assert.doesNotMatch(hook, /\/api\/invoices/);
   assert.doesNotMatch(form, /MOCK_MERCHANT_A|useInvoices|createMockInvoice/);
+  assert.match(form, /latestRequest/);
+  assert.match(
+    await readFile("components/invoice/InvoiceFields.tsx", "utf8"),
+    /<fieldset[\s\S]*disabled=\{disabled\}[\s\S]*step="0\.000001"/
+  );
   assert.match(created, /getArcExplorerTxUrl/);
 });

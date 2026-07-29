@@ -9,18 +9,27 @@ import {
   type Hex
 } from "viem";
 
-export type CreateStage = "idle" | "signing" | "confirming" | "saved" | "error";
+export type CreateStage =
+  | "idle"
+  | "signing"
+  | "confirming"
+  | "persisting"
+  | "saved"
+  | "error";
 
 type CreateStageEvent =
   | "wallet_requested"
   | "hash_received"
   | "receipt_confirmed"
-  | "receipt_reverted";
+  | "receipt_reverted"
+  | "metadata_saved"
+  | "metadata_failed";
 
 const transitions: Record<CreateStage, Partial<Record<CreateStageEvent, CreateStage>>> = {
   idle: { wallet_requested: "signing" },
   signing: { hash_received: "confirming" },
-  confirming: { receipt_confirmed: "saved", receipt_reverted: "error" },
+  confirming: { receipt_confirmed: "persisting", receipt_reverted: "error" },
+  persisting: { metadata_saved: "saved", metadata_failed: "saved" },
   saved: { wallet_requested: "signing" },
   error: { wallet_requested: "signing" }
 };
@@ -51,20 +60,27 @@ type CreationReceipt = {
 
 export type CreateState = {
   stage: CreateStage;
+  requestId?: Hex;
   txHash?: Hex;
   invoice?: CreatedInvoiceEvent;
   metadataPending?: boolean;
   error?: string;
+  recovery?: {
+    txHash: Hex;
+    invoice: CreatedInvoiceEvent;
+    metadataPending: boolean;
+    error?: string;
+  };
 };
 
 type CreateStateEvent =
-  | { type: "wallet_requested" }
-  | { type: "hash_received"; txHash: Hex }
-  | { type: "receipt_confirmed"; invoice: CreatedInvoiceEvent }
-  | { type: "receipt_reverted"; error: string }
-  | { type: "metadata_saved" }
-  | { type: "metadata_failed"; error: string }
-  | { type: "failed"; error: string };
+  | { type: "wallet_requested"; requestId: Hex }
+  | { type: "hash_received"; requestId: Hex; txHash: Hex }
+  | { type: "receipt_confirmed"; requestId: Hex; invoice: CreatedInvoiceEvent }
+  | { type: "receipt_reverted"; requestId: Hex; error: string }
+  | { type: "metadata_saved"; requestId: Hex }
+  | { type: "metadata_failed"; requestId: Hex; error: string }
+  | { type: "failed"; requestId: Hex; error: string };
 
 export function nextCreateStage(stage: CreateStage, event: CreateStageEvent): CreateStage {
   const next = transitions[stage][event];
@@ -77,19 +93,38 @@ export function nextCreateStage(stage: CreateStage, event: CreateStageEvent): Cr
 }
 
 export function reduceCreateState(state: CreateState, event: CreateStateEvent): CreateState {
+  if (event.type !== "wallet_requested" && state.requestId !== event.requestId) {
+    return state;
+  }
+
   switch (event.type) {
     case "wallet_requested":
-      return { stage: nextCreateStage(state.stage, event.type) };
+      const recovery =
+        state.txHash && state.invoice
+          ? {
+              txHash: state.txHash,
+              invoice: state.invoice,
+              metadataPending: Boolean(state.metadataPending),
+              error: state.error
+            }
+          : state.recovery;
+      return {
+        stage: nextCreateStage(state.stage, event.type),
+        requestId: event.requestId,
+        recovery
+      };
     case "hash_received":
       return {
         stage: nextCreateStage(state.stage, event.type),
+        requestId: event.requestId,
         txHash: event.txHash
       };
     case "receipt_confirmed":
       return {
         ...state,
         stage: nextCreateStage(state.stage, event.type),
-        invoice: event.invoice
+        invoice: event.invoice,
+        metadataPending: true
       };
     case "receipt_reverted":
       return {
@@ -98,16 +133,30 @@ export function reduceCreateState(state: CreateState, event: CreateStateEvent): 
         error: event.error
       };
     case "metadata_saved":
-      return { ...state, metadataPending: false, error: undefined };
+      return {
+        ...state,
+        stage: nextCreateStage(state.stage, event.type),
+        metadataPending: false,
+        error: undefined
+      };
     case "metadata_failed":
       return {
         ...state,
+        stage: nextCreateStage(state.stage, event.type),
         metadataPending: true,
         error: event.error
       };
     case "failed":
       return { ...state, stage: "error", error: event.error };
   }
+}
+
+export function beginCreateRequest(activeRequest: Hex | undefined, requestId: Hex) {
+  if (activeRequest) {
+    throw new Error("Invoice creation is already in progress.");
+  }
+
+  return requestId;
 }
 
 export function parseInvoiceAmount(value: string): bigint {

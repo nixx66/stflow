@@ -1,11 +1,12 @@
 "use client";
 
 import { CheckCircle2, Link2, ShieldCheck } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useMemo, useRef, useState } from "react";
 import { getAddress } from "viem";
 import { useAccount } from "wagmi";
 import { useCreateInvoice } from "@/hooks/useCreateInvoice";
 import { isValidInvoiceWalletAddress } from "@/lib/invoiceCreateReadiness";
+import { createReferenceId } from "@/lib/invoiceCreateTransaction";
 import { buildSharedInvoicePayUrl } from "@/lib/sharedInvoiceLink";
 import { getMerchantWalletDisplay } from "@/lib/walletDisplay";
 import { Invoice } from "@/types/invoice";
@@ -52,6 +53,8 @@ export function InvoiceForm() {
   const [creationTxHash, setCreationTxHash] = useState<string>();
   const [formError, setFormError] = useState<string>();
   const [form, setForm] = useState(initialForm);
+  const latestRequest = useRef<string | undefined>(undefined);
+  const formBusy = useRef(false);
 
   const paymentLink = useMemo(() => {
     if (!createdInvoice || typeof window === "undefined") return "";
@@ -70,6 +73,8 @@ export function InvoiceForm() {
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (formBusy.current) return;
+
     setFormError(undefined);
 
     if (form.expiresAt && new Date(form.expiresAt).getTime() <= Date.now()) {
@@ -104,25 +109,45 @@ export function InvoiceForm() {
       return;
     }
 
+    const requestId = createReferenceId();
+    latestRequest.current = requestId;
+    formBusy.current = true;
+    setCreatedInvoice(undefined);
+    setCreationTxHash(undefined);
+    setMetadataPending(false);
+
     try {
-      const result = await createInvoice({
-        payer: getAddress(payerWallet),
-        customerName: form.customerName,
-        title: form.title,
-        amount: form.amount,
-        description: form.description,
-        memo: form.memo,
-        expiresAt: form.expiresAt
-      });
+      const result = await createInvoice(
+        {
+          payer: getAddress(payerWallet),
+          customerName: form.customerName,
+          title: form.title,
+          amount: form.amount,
+          description: form.description,
+          memo: form.memo,
+          expiresAt: form.expiresAt
+        },
+        requestId
+      );
+      if (latestRequest.current !== result.requestId) return;
+
       setCreatedInvoice(result.invoice);
       setCreationTxHash(result.txHash);
       setMetadataPending(result.metadataPending);
     } catch (error) {
+      if (latestRequest.current !== requestId) return;
       setFormError(error instanceof Error ? error.message : "Unable to create the invoice.");
+    } finally {
+      if (latestRequest.current === requestId) {
+        formBusy.current = false;
+      }
     }
   };
 
-  const submitting = state.stage === "signing" || state.stage === "confirming";
+  const submitting =
+    state.stage === "signing" ||
+    state.stage === "confirming" ||
+    state.stage === "persisting";
   const displayedError = formError ?? configError;
 
   return (
@@ -183,6 +208,8 @@ export function InvoiceForm() {
               ? "Confirm in wallet"
               : state.stage === "confirming"
                 ? "Confirming on Arc"
+                : state.stage === "persisting"
+                  ? "Saving invoice metadata"
                 : "Create invoice"
           }
         />

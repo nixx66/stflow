@@ -1,16 +1,19 @@
 "use client";
 
-import { useCallback, useReducer } from "react";
+import { useCallback, useReducer, useRef } from "react";
 import {
+  getAccount,
   getBytecode,
+  getChainId,
   switchChain,
   waitForTransactionReceipt,
   writeContract
 } from "wagmi/actions";
 import { getAddress, isAddress, type Address, type Hex } from "viem";
-import { useAccount, useConfig } from "wagmi";
+import { useConfig } from "wagmi";
 import { ARC_TESTNET } from "@/lib/arc";
 import {
+  beginCreateRequest,
   createReferenceId,
   parseInvoiceAmount,
   parseInvoiceDeadline,
@@ -35,6 +38,7 @@ export type CreateInvoiceInput = InvoiceMetadata & {
 
 export type CreateInvoiceResult = {
   invoice: Invoice;
+  requestId: Hex;
   txHash: Hex;
   metadataPending: boolean;
 };
@@ -72,44 +76,66 @@ async function persistMetadata(invoice: Invoice, referenceId: Hex, metadataHash:
   }
 }
 
+function assertWalletSnapshot(
+  config: Parameters<typeof getAccount>[0],
+  merchant: Address,
+  requireArcChain: boolean
+) {
+  const account = getAccount(config);
+
+  if (!account.address || getAddress(account.address) !== merchant) {
+    throw new Error("The connected wallet changed while creating the invoice.");
+  }
+  if (requireArcChain && getChainId(config) !== ARC_TESTNET.chainId) {
+    throw new Error("The connected network changed while creating the invoice.");
+  }
+}
+
 export function useCreateInvoice() {
   const config = useConfig();
-  const { address, chainId, isConnected } = useAccount();
   const [state, dispatch] = useReducer(reduceCreateState, initialState);
+  const activeRequest = useRef<Hex | undefined>(undefined);
   const configError = getInvoiceCreateConfigError();
 
   const createInvoice = useCallback(
-    async (input: CreateInvoiceInput): Promise<CreateInvoiceResult> => {
-      if (configError) throw new Error(configError);
-      if (!isConnected || !address) {
-        throw new Error("Connect the merchant wallet before creating an invoice.");
-      }
-
-      const merchant = getAddress(address);
-      const payer = getAddress(input.payer);
-      const amount = parseInvoiceAmount(input.amount);
-      const dueAt = parseInvoiceDeadline(input.expiresAt);
-
-      if (merchant === payer) {
-        throw new Error("Payer wallet must be different from the merchant wallet.");
-      }
-
-      const metadata = {
-        customerName: input.customerName,
-        title: input.title,
-        description: input.description,
-        memo: input.memo
-      };
-      const metadataHash = hashInvoiceMetadata(metadata);
-      const referenceId = createReferenceId();
-      const id = invoiceIdFromReference(merchant, referenceId);
-
-      dispatch({ type: "wallet_requested" });
-
+    async (
+      input: CreateInvoiceInput,
+      requestId = createReferenceId()
+    ): Promise<CreateInvoiceResult> => {
+      activeRequest.current = beginCreateRequest(activeRequest.current, requestId);
       try {
-        if (chainId !== ARC_TESTNET.chainId) {
+        if (configError) throw new Error(configError);
+
+        const account = getAccount(config);
+        if (!account.isConnected || !account.address) {
+          throw new Error("Connect the merchant wallet before creating an invoice.");
+        }
+
+        const merchant = getAddress(account.address);
+        const payer = getAddress(input.payer);
+        const amount = parseInvoiceAmount(input.amount);
+        const dueAt = parseInvoiceDeadline(input.expiresAt);
+
+        if (merchant === payer) {
+          throw new Error("Payer wallet must be different from the merchant wallet.");
+        }
+
+        const metadata = {
+          customerName: input.customerName,
+          title: input.title,
+          description: input.description,
+          memo: input.memo
+        };
+        const metadataHash = hashInvoiceMetadata(metadata);
+        const referenceId = createReferenceId();
+        const id = invoiceIdFromReference(merchant, referenceId);
+
+        dispatch({ type: "wallet_requested", requestId });
+
+        if (getChainId(config) !== ARC_TESTNET.chainId) {
           await switchChain(config, { chainId: ARC_TESTNET.chainId });
         }
+        assertWalletSnapshot(config, merchant, true);
 
         const { INVOICE_REGISTRY_ADDRESS, invoiceRegistryAbi } = await import(
           "@/lib/contracts/invoiceRegistry"
@@ -118,6 +144,7 @@ export function useCreateInvoice() {
           address: INVOICE_REGISTRY_ADDRESS,
           chainId: ARC_TESTNET.chainId
         });
+        assertWalletSnapshot(config, merchant, true);
 
         if (!code || code === "0x") {
           throw new Error("Invoice registry is not deployed on Arc Testnet.");
@@ -131,7 +158,7 @@ export function useCreateInvoice() {
           functionName: "createInvoice",
           args: [referenceId, payer, amount, dueAt, metadataHash]
         });
-        dispatch({ type: "hash_received", txHash });
+        dispatch({ type: "hash_received", requestId, txHash });
 
         const receipt = await waitForTransactionReceipt(config, {
           chainId: ARC_TESTNET.chainId,
@@ -145,7 +172,7 @@ export function useCreateInvoice() {
           dueAt,
           metadataHash
         });
-        dispatch({ type: "receipt_confirmed", invoice: created });
+        dispatch({ type: "receipt_confirmed", requestId, invoice: created });
 
         const invoice: Invoice = {
           id,
@@ -164,20 +191,37 @@ export function useCreateInvoice() {
           creationTxHash: txHash
         };
 
+        let metadataPending = false;
+        let metadataError: string | undefined;
         try {
           await persistMetadata(invoice, referenceId, metadataHash);
-          dispatch({ type: "metadata_saved" });
-          return { invoice, txHash, metadataPending: false };
         } catch (error) {
-          dispatch({ type: "metadata_failed", error: errorMessage(error) });
-          return { invoice, txHash, metadataPending: true };
+          metadataPending = true;
+          metadataError = errorMessage(error);
         }
+
+        assertWalletSnapshot(config, merchant, true);
+
+        if (metadataPending) {
+          dispatch({
+            type: "metadata_failed",
+            requestId,
+            error: metadataError!
+          });
+        } else {
+          dispatch({ type: "metadata_saved", requestId });
+        }
+        return { invoice, requestId, txHash, metadataPending };
       } catch (error) {
-        dispatch({ type: "failed", error: errorMessage(error) });
+        dispatch({ type: "failed", requestId, error: errorMessage(error) });
         throw error;
+      } finally {
+        if (activeRequest.current === requestId) {
+          activeRequest.current = undefined;
+        }
       }
     },
-    [address, chainId, config, configError, isConnected]
+    [config, configError]
   );
 
   return {

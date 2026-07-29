@@ -31,7 +31,10 @@ const labelClass = "text-xs font-black uppercase tracking-[0.13em] text-muted";
 
 export function InvoiceFields({ change, disabled, form, formError, merchantWalletDisplay, minExpireAt, submitLabel = "Create invoice" }: InvoiceFieldsProps) {
   return (
-    <section className="sf-float-card relative overflow-hidden rounded-[2.15rem] border border-white/75 bg-white/80 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.92),0_34px_100px_rgba(4,41,31,0.12)] backdrop-blur-2xl sm:p-5 xl:p-6">
+    <fieldset
+      className="sf-float-card relative overflow-hidden rounded-[2.15rem] border border-white/75 bg-white/80 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.92),0_34px_100px_rgba(4,41,31,0.12)] backdrop-blur-2xl sm:p-5 xl:p-6"
+      disabled={disabled}
+    >
       <div className="pointer-events-none absolute right-5 top-5 h-24 w-24 rounded-full bg-[#a8ef72]/20 blur-2xl" />
       <div className="relative z-10 grid gap-4">
         <div className="flex flex-col gap-3 border-b border-[#e6e2d8] pb-4 sm:flex-row sm:items-center sm:justify-between">
@@ -110,11 +113,11 @@ export function InvoiceFields({ change, disabled, form, formError, merchantWalle
               <span className="text-xs font-black uppercase tracking-[0.16em]">Amount in USDC</span>
               <input
                 className="mt-2 min-w-0 bg-transparent text-5xl font-black leading-none tracking-tight outline-none placeholder:text-[#8b7a24] sm:text-6xl"
-                min="0.01"
+                min="0.000001"
                 onChange={(event) => change("amount", event.target.value)}
                 placeholder="0.00"
                 required
-                step="0.01"
+                step="0.000001"
                 type="number"
                 value={form.amount}
               />
@@ -169,6 +172,6 @@ export function InvoiceFields({ change, disabled, form, formError, merchantWalle
           Your invoice data stays attached to the payment link, receipt, and dashboard record.
         </p>
       </div>
-    </section>
+    </fieldset>
   );
 }
