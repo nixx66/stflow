@@ -138,9 +138,12 @@ begin
     or p_to_block < p_from_block
     or p_to_block - p_from_block + 1 > 2000
     or p_to_block_hash !~ '^0x[0-9a-f]{64}$'
+    or p_events is null
     or pg_catalog.jsonb_typeof(p_events) <> 'array'
-    or pg_catalog.jsonb_array_length(p_events) > 10000
   then
+    raise exception using errcode = '22023', message = 'STFLOW_SYNC_RANGE';
+  end if;
+  if pg_catalog.jsonb_array_length(p_events) > 10000 then
     raise exception using errcode = '22023', message = 'STFLOW_SYNC_RANGE';
   end if;
 
@@ -274,6 +277,10 @@ begin
     v_previous_block := v_block;
     v_previous_tx := v_tx_index;
     v_previous_log := v_log_index;
+
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(p_registry_address || ':' || v_invoice_id, 0)
+    );
 
     v_inserted := false;
     insert into public.processed_chain_events (
@@ -497,6 +504,83 @@ begin
       and v_row.create_block_number = p_create_block_number
       and v_row.create_log_index = p_create_log_index
     then
+      select * into v_created from public.processed_chain_events
+      where chain_id = p_chain_id
+        and registry_address = p_registry_address
+        and invoice_id = p_invoice_id
+        and event_name = 'InvoiceCreated'
+      order by block_number, transaction_index, log_index
+      limit 1;
+
+      select * into v_terminal from public.processed_chain_events
+      where chain_id = p_chain_id
+        and registry_address = p_registry_address
+        and invoice_id = p_invoice_id
+        and event_name in ('InvoicePaid', 'InvoiceCancelled')
+      order by block_number desc, transaction_index desc, log_index desc
+      limit 1;
+
+      if found then
+        if v_created.invoice_id is null
+          or v_created.merchant_wallet <> p_merchant_wallet
+          or v_created.payer_wallet <> p_payer_wallet
+          or v_created.amount_raw <> p_amount_raw
+          or v_terminal.merchant_wallet <> p_merchant_wallet
+          or (v_terminal.event_name = 'InvoicePaid' and (
+            v_terminal.payer_wallet <> p_payer_wallet
+            or v_terminal.amount_raw <> p_amount_raw
+          ))
+        then
+          raise exception using errcode = 'P0001', message = 'STFLOW_METADATA_CONFLICT';
+        end if;
+
+        if v_row.indexed_status = 'pending' then
+          if v_terminal.event_name = 'InvoicePaid' then
+            update public.invoice_metadata set
+              indexed_status = 'paid',
+              paid_chain_at = v_terminal.block_timestamp,
+              payment_tx_hash = v_terminal.tx_hash,
+              payment_block_number = v_terminal.block_number,
+              payment_log_index = v_terminal.log_index
+            where chain_id = p_chain_id
+              and registry_address = p_registry_address
+              and invoice_id = p_invoice_id;
+          else
+            update public.invoice_metadata set
+              indexed_status = 'cancelled',
+              cancelled_chain_at = v_terminal.block_timestamp,
+              cancellation_tx_hash = v_terminal.tx_hash,
+              cancellation_block_number = v_terminal.block_number,
+              cancellation_log_index = v_terminal.log_index
+            where chain_id = p_chain_id
+              and registry_address = p_registry_address
+              and invoice_id = p_invoice_id;
+          end if;
+        elsif (
+          v_terminal.event_name = 'InvoicePaid'
+          and (
+            v_row.indexed_status <> 'paid'
+            or v_row.payment_tx_hash <> v_terminal.tx_hash
+            or v_row.payment_block_number <> v_terminal.block_number
+            or v_row.payment_log_index <> v_terminal.log_index
+            or v_row.paid_chain_at <> v_terminal.block_timestamp
+          )
+        ) or (
+          v_terminal.event_name = 'InvoiceCancelled'
+          and (
+            v_row.indexed_status <> 'cancelled'
+            or v_row.cancellation_tx_hash <> v_terminal.tx_hash
+            or v_row.cancellation_block_number <> v_terminal.block_number
+            or v_row.cancellation_log_index <> v_terminal.log_index
+            or v_row.cancelled_chain_at <> v_terminal.block_timestamp
+          )
+        ) then
+          raise exception using errcode = 'P0001', message = 'STFLOW_METADATA_CONFLICT';
+        end if;
+      elsif v_row.indexed_status <> 'pending' then
+        raise exception using errcode = 'P0001', message = 'STFLOW_METADATA_CONFLICT';
+      end if;
+
       update public.wallet_nonces set consumed_at = v_now
       where wallet = p_wallet and nonce_hash = p_nonce_hash;
       return 'idempotent';

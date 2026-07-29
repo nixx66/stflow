@@ -67,6 +67,13 @@ export class SyncDatabaseError extends Error {
   }
 }
 
+export class SyncBatchOverflowError extends Error {
+  constructor() {
+    super("A single block contains too many registry events.");
+    this.name = "SyncBatchOverflowError";
+  }
+}
+
 export type SyncConfig = Readonly<{
   deploymentBlock: bigint;
   confirmationDepth: bigint;
@@ -161,7 +168,7 @@ export function parseSyncConfig(
 ): SyncConfig & { cronSecret: string } {
   const deploymentBlock = decimal(
     env.INVOICE_REGISTRY_DEPLOYMENT_BLOCK,
-    0n,
+    1n,
     BigInt(Number.MAX_SAFE_INTEGER)
   );
   const confirmationDepth = decimal(
@@ -181,6 +188,28 @@ export function parseSyncConfig(
     throw new SyncConfigError();
   }
   return Object.freeze({ deploymentBlock, confirmationDepth, cronSecret });
+}
+
+export function parseRpcResult(
+  operation: "initialize",
+  value: unknown
+): "initialized" | "existing";
+export function parseRpcResult(
+  operation: "apply",
+  value: unknown
+): "applied" | "idempotent";
+export function parseRpcResult(
+  operation: "initialize" | "apply",
+  value: unknown
+) {
+  if (
+    (operation === "initialize" &&
+      (value === "initialized" || value === "existing")) ||
+    (operation === "apply" && (value === "applied" || value === "idempotent"))
+  ) {
+    return value;
+  }
+  throw new SyncDatabaseError();
 }
 
 export function authorizeCron(header: string | null, secret: string) {
@@ -246,9 +275,6 @@ export async function syncInvoiceEvents(
 ) {
   let cursor = await deps.db.getCursor();
   if (!cursor) {
-    if (config.deploymentBlock === 0n) {
-      throw new SyncConfigError();
-    }
     const initialBlock = config.deploymentBlock - 1n;
     const canonical = await deps.chain.getBlock({ blockNumber: initialBlock });
     await deps.db.initializeCursor({
@@ -277,14 +303,40 @@ export async function syncInvoiceEvents(
   if (fromBlock > confirmedHead) {
     return { processed: 0, fromBlock: null, toBlock: null };
   }
-  const toBlock =
+  let toBlock =
     fromBlock + MAX_BLOCKS - 1n < confirmedHead
       ? fromBlock + MAX_BLOCKS - 1n
       : confirmedHead;
+  let logs: readonly unknown[];
+  let events: ChainEvent[];
+  let targetBefore: ChainBlock;
+  while (true) {
+    targetBefore = await deps.chain.getBlock({ blockNumber: toBlock });
+    logs = await deps.chain.getLogs({ fromBlock, toBlock });
+    if (
+      logs.some(
+        (log) =>
+          typeof log === "object" &&
+          log !== null &&
+          "removed" in log &&
+          log.removed === true
+      )
+    ) {
+      throw new ReorgError();
+    }
+    if (logs.length <= 10_000) {
+      events = [...(await deps.decodeLogs(logs))].sort(orderEvents);
+      if (events.length <= 10_000) break;
+    }
+    if (toBlock === fromBlock) throw new SyncBatchOverflowError();
+    const size = toBlock - fromBlock + 1n;
+    toBlock = fromBlock + size / 2n - 1n;
+  }
 
-  const logs = await deps.chain.getLogs({ fromBlock, toBlock });
-  const events = [...(await deps.decodeLogs(logs))].sort(orderEvents);
   const finalBlock = await deps.chain.getBlock({ blockNumber: toBlock });
+  if (finalBlock.hash.toLowerCase() !== targetBefore.hash.toLowerCase()) {
+    throw new ReorgError();
+  }
   await deps.db.applyBatch({
     expectedCursor: cursor,
     fromBlock,
@@ -375,7 +427,7 @@ export function createSyncDependencies(
           p_block_hash: input.blockHash.toLowerCase()
         });
         if (error) throw new SyncDatabaseError();
-        return data === "existing" ? "existing" : "initialized";
+        return parseRpcResult("initialize", data);
       },
       async applyBatch(input) {
         const events = input.events.map((event) => ({
@@ -401,25 +453,43 @@ export function createSyncDependencies(
           p_events: events
         });
         if (error) throw new SyncDatabaseError();
-        return data === "idempotent" ? "idempotent" : "applied";
+        return parseRpcResult("apply", data);
       }
     },
     async decodeLogs(logs) {
       const blocks = new Map<bigint, ChainBlock>();
+      const blockNumbers = [
+        ...new Set(
+          (logs as Array<Record<string, unknown>>).map(
+            (log) => log.blockNumber as bigint
+          )
+        )
+      ];
+      for (let offset = 0; offset < blockNumbers.length; offset += 8) {
+        const batch = blockNumbers.slice(offset, offset + 8);
+        const fetched = await Promise.all(
+          batch.map(async (blockNumber) => {
+            const block = await client.getBlock({ blockNumber });
+            if (!block.hash) throw new Error("Arc returned an unsealed block.");
+            return [
+              blockNumber,
+              {
+                number: block.number,
+                hash: block.hash,
+                timestamp: block.timestamp
+              } satisfies ChainBlock
+            ] as const;
+          })
+        );
+        for (const [blockNumber, block] of fetched) {
+          blocks.set(blockNumber, block);
+        }
+      }
       const events: ChainEvent[] = [];
       for (const raw of logs as Array<Record<string, unknown>>) {
         const blockNumber = raw.blockNumber as bigint;
-        let block = blocks.get(blockNumber);
-        if (!block) {
-          const canonical = await client.getBlock({ blockNumber });
-          if (!canonical.hash) throw new Error("Arc returned an unsealed block.");
-          block = {
-            number: canonical.number,
-            hash: canonical.hash,
-            timestamp: canonical.timestamp
-          };
-          blocks.set(blockNumber, block);
-        }
+        const block = blocks.get(blockNumber);
+        if (!block) throw new Error("Arc block verification failed.");
         if (
           (raw.blockHash as Hex).toLowerCase() !== block.hash.toLowerCase()
         ) {

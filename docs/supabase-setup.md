@@ -167,6 +167,12 @@ After migration `003`, invoke the route once manually with
 requests. Both cases must remain idempotent: event identities stay unique and
 the locked cursor advances monotonically.
 
+Keep the Vercel cron disabled until all three migrations have been applied to
+the target project and verified against a real PostgreSQL instance. The release
+gate includes concurrent metadata/event interleavings, service-role-only RPC
+execution, forced RLS for browser roles, and PostgREST denial for `anon` and
+`authenticated`. Static SQL tests do not satisfy this gate.
+
 ## Server invariants for the next tasks
 
 Normalize every EVM address, bytes32 value, and transaction hash to lowercase

@@ -5,6 +5,7 @@ import {
   ReorgError,
   SyncConfigError,
   authorizeCron,
+  parseRpcResult,
   parseSyncConfig,
   projectMetadataStatus,
   syncInvoiceEvents,
@@ -83,6 +84,7 @@ test("rejects malformed deployment, confirmation, and cron configuration", () =>
     cronSecret: base.CRON_SECRET
   });
   for (const env of [
+    { ...base, INVOICE_REGISTRY_DEPLOYMENT_BLOCK: "0" },
     { ...base, INVOICE_REGISTRY_DEPLOYMENT_BLOCK: "-1" },
     { ...base, INVOICE_REGISTRY_DEPLOYMENT_BLOCK: "1.5" },
     { ...base, INVOICE_REGISTRY_DEPLOYMENT_BLOCK: "9007199254740992" },
@@ -91,6 +93,17 @@ test("rejects malformed deployment, confirmation, and cron configuration", () =>
     { ...base, CRON_SECRET: "short-secret" }
   ]) {
     assert.throws(() => parseSyncConfig(env), SyncConfigError);
+  }
+});
+
+test("accepts only exact database RPC result values", () => {
+  assert.equal(parseRpcResult("initialize", "initialized"), "initialized");
+  assert.equal(parseRpcResult("initialize", "existing"), "existing");
+  assert.equal(parseRpcResult("apply", "applied"), "applied");
+  assert.equal(parseRpcResult("apply", "idempotent"), "idempotent");
+  for (const value of [null, undefined, "", "ok", 1]) {
+    assert.throws(() => parseRpcResult("initialize", value), /database/i);
+    assert.throws(() => parseRpcResult("apply", value), /database/i);
   }
 });
 
@@ -130,6 +143,60 @@ test("holds back unconfirmed blocks and caps each scan at 2000 blocks", async ()
   );
   assert.deepEqual(calls.logs, [{ fromBlock: 101n, toBlock: 2100n }]);
   assert.equal(result.toBlock, 2100n);
+});
+
+test("shrinks an oversized event range until the batch is within the SQL cap", async () => {
+  const ranges: Array<[bigint, bigint]> = [];
+  const { deps, calls } = harness({
+    chain: {
+      getBlockNumber: async () => 5000n,
+      getBlock: async ({ blockNumber }) => ({
+        number: blockNumber,
+        hash: hash(blockNumber === 100n ? "6" : "7"),
+        timestamp: 1000n
+      }),
+      getLogs: async ({ fromBlock, toBlock }) => {
+        ranges.push([fromBlock, toBlock]);
+        return Array.from(
+          { length: toBlock - fromBlock + 1n > 1000n ? 10_001 : 1 },
+          () => ({ removed: false })
+        );
+      }
+    },
+    decodeLogs: async () => []
+  });
+  const result = await syncInvoiceEvents(
+    { deploymentBlock: 100n, confirmationDepth: 12n },
+    deps
+  );
+  assert.deepEqual(ranges, [
+    [101n, 2100n],
+    [101n, 1100n]
+  ]);
+  assert.equal(result.toBlock, 1100n);
+  assert.equal(calls.apply.length, 1);
+});
+
+test("single-block overflow fails without applying a database batch", async () => {
+  const { deps, calls } = harness({
+    chain: {
+      getBlockNumber: async () => 102n,
+      getBlock: async ({ blockNumber }) => ({
+        number: blockNumber,
+        hash: hash(blockNumber === 100n ? "6" : "7"),
+        timestamp: 1000n
+      }),
+      getLogs: async () => Array.from({ length: 10_001 }, () => ({}))
+    }
+  });
+  await assert.rejects(
+    syncInvoiceEvents(
+      { deploymentBlock: 100n, confirmationDepth: 1n },
+      deps
+    ),
+    /single block/i
+  );
+  assert.equal(calls.apply.length, 0);
 });
 
 test("does not scan when confirmations leave no new block", async () => {
@@ -178,6 +245,64 @@ test("fails closed on cursor hash mismatch before requesting logs", async () => 
     ReorgError
   );
   assert.equal(requestedLogs, false);
+});
+
+test("rejects removed logs before decoding or applying them", async () => {
+  let decoded = false;
+  const { deps, calls } = harness({
+    chain: {
+      getBlockNumber: async () => 150n,
+      getBlock: async ({ blockNumber }) => ({
+        number: blockNumber,
+        hash: blockNumber === 100n ? hash("6") : hash("7"),
+        timestamp: 1000n
+      }),
+      getLogs: async () => [{ removed: true }]
+    },
+    decodeLogs: async () => {
+      decoded = true;
+      return [];
+    }
+  });
+  await assert.rejects(
+    syncInvoiceEvents(
+      { deploymentBlock: 100n, confirmationDepth: 12n },
+      deps
+    ),
+    ReorgError
+  );
+  assert.equal(decoded, false);
+  assert.equal(calls.apply.length, 0);
+});
+
+test("rechecks the target hash immediately before the database transaction", async () => {
+  let targetReads = 0;
+  const { deps, calls } = harness({
+    chain: {
+      getBlockNumber: async () => 150n,
+      getBlock: async ({ blockNumber }) => {
+        if (blockNumber === 100n) {
+          return { number: blockNumber, hash: hash("6"), timestamp: 1000n };
+        }
+        targetReads += 1;
+        return {
+          number: blockNumber,
+          hash: targetReads === 1 ? hash("7") : hash("8"),
+          timestamp: 1000n
+        };
+      },
+      getLogs: async () => []
+    }
+  });
+  await assert.rejects(
+    syncInvoiceEvents(
+      { deploymentBlock: 100n, confirmationDepth: 12n },
+      deps
+    ),
+    ReorgError
+  );
+  assert.equal(targetReads, 2);
+  assert.equal(calls.apply.length, 0);
 });
 
 test("initializes at deployment minus one using the canonical block hash", async () => {
@@ -290,6 +415,36 @@ test("later metadata projects an already processed terminal event", () => {
   );
 });
 
+test("shared invoice lock serializes event insertion before metadata reconciliation", async () => {
+  let tail = Promise.resolve();
+  let terminal: "paid" | undefined;
+  let persisted: "pending" | "paid" | undefined;
+  const locked = async (work: () => Promise<void>) => {
+    const previous = tail;
+    let release!: () => void;
+    tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      await work();
+    } finally {
+      release();
+    }
+  };
+
+  await Promise.all([
+    locked(async () => {
+      await Promise.resolve();
+      terminal = "paid";
+    }),
+    locked(async () => {
+      persisted = terminal ?? "pending";
+    })
+  ]);
+  assert.equal(persisted, "paid");
+});
+
 test("migration installs an atomic service-only event projection", async () => {
   const sql = await readFile(
     "supabase/migrations/202607290003_chain_sync_rpc.sql",
@@ -301,6 +456,7 @@ test("migration installs an atomic service-only event projection", async () => {
   assert.match(sql, /security definer[\s\S]*set search_path = ''/i);
   assert.match(sql, /for update/i);
   assert.match(sql, /jsonb_array_elements[\s\S]*with ordinality/i);
+  assert.match(sql, /p_events is null/i);
   assert.match(sql, /STFLOW_SYNC_RANGE/i);
   assert.match(sql, /STFLOW_SYNC_CURSOR/i);
   assert.match(sql, /STFLOW_EVENT_CONFLICT/i);
@@ -308,13 +464,22 @@ test("migration installs an atomic service-only event projection", async () => {
   assert.match(sql, /create or replace function public\.persist_invoice_metadata/i);
   assert.match(sql, /processed_chain_events[\s\S]*InvoicePaid/i);
   assert.match(sql, /processed_chain_events[\s\S]*InvoiceCancelled/i);
+  const invoiceLocks = sql.match(
+    /pg_catalog\.hashtextextended\(p_registry_address \|\| ':' \|\| (?:p_invoice_id|v_invoice_id), 0\)/g
+  );
+  assert.ok((invoiceLocks?.length ?? 0) >= 2);
+  assert.match(
+    sql,
+    /if found then[\s\S]*processed_chain_events[\s\S]*indexed_status = 'paid'/i
+  );
   assert.match(sql, /grant execute[\s\S]*to service_role/i);
   assert.match(sql, /revoke all[\s\S]*from public, anon, authenticated/i);
 });
 
 test("cron route is private, node-only, and scheduled every minute", async () => {
-  const [route, vercel] = await Promise.all([
+  const [route, syncSource, vercel] = await Promise.all([
     readFile("app/api/internal/sync-chain/route.ts", "utf8"),
+    readFile("lib/server/syncInvoiceEvents.ts", "utf8"),
     readFile("vercel.json", "utf8")
   ]);
   assert.match(route, /export const runtime = "nodejs"/);
@@ -323,6 +488,9 @@ test("cron route is private, node-only, and scheduled every minute", async () =>
   assert.match(route, /status:\s*503/);
   assert.match(route, /status:\s*409/);
   assert.doesNotMatch(route, /console\.(log|error).*secret/i);
+  assert.match(syncSource, /offset \+= 8/);
+  assert.match(syncSource, /Promise\.all/);
+  assert.match(syncSource, /log\.removed === true/);
   assert.deepEqual(JSON.parse(vercel), {
     crons: [{ path: "/api/internal/sync-chain", schedule: "* * * * *" }]
   });
