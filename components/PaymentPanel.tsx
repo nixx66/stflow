@@ -1,104 +1,112 @@
 "use client";
 
-import { ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
+import { ArrowRight, CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { useAccount } from "wagmi";
-import { formatCurrency, shortenAddress } from "@/lib/format";
-import {
-  getCheckoutAuthorization,
-  getInvoiceStatus,
-} from "@/lib/invoiceStatus";
-import { getPaymentButtonLabel, getPaymentModeLabel } from "@/lib/paymentMode";
+import { formatUnits, isAddressEqual } from "viem";
+import { getAddress } from "viem";
 import { usePayInvoice } from "@/hooks/usePayInvoice";
-import { Invoice } from "@/types/invoice";
+import { ARC_TESTNET, getArcExplorerTxUrl } from "@/lib/arc";
+import { formatCurrency, shortenAddress } from "@/lib/format";
+import { USDC_DECIMALS } from "@/lib/usdc";
 import { StatusBadge } from "./StatusBadge";
 import { WalletStatusCard } from "./wallet/WalletStatusCard";
 
-function stageMessage(stage: ReturnType<typeof usePayInvoice>["stage"]) {
+function stageMessage(stage: ReturnType<typeof usePayInvoice>["state"]["stage"]) {
   switch (stage) {
-    case "wallet":
-      return "Authorizing mock USDC payment...";
-    case "submitted":
-      return "Transaction submitted...";
-    case "confirming":
-      return "Confirming settlement state...";
+    case "checking":
+      return "Checking onchain invoice and USDC balance";
+    case "approval-signing":
+      return "Approve the exact invoice amount in your wallet";
+    case "approval-confirming":
+      return "Confirming USDC approval on Arc Testnet";
+    case "payment-signing":
+      return "Confirm the invoice payment in your wallet";
+    case "payment-confirming":
+      return "Confirming invoice settlement on Arc Testnet";
     case "success":
-      return "Payment successful";
+      return "Payment confirmed onchain";
     case "error":
       return "Payment needs attention";
     default:
-      return "Ready for mock payment authorization";
+      return "Ready for onchain payment";
   }
 }
 
-export function PaymentPanel({ invoice }: { invoice: Invoice }) {
+export function PaymentPanel({ invoiceId }: { invoiceId: string }) {
   const router = useRouter();
-  const { address: connectedPayerWallet } = useAccount();
-  const [now, setNow] = useState(() => new Date());
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const {
     pay,
-    stage,
-    txHash,
-    error,
-    paymentMode,
-    livePayment,
+    state,
+    invoice,
+    metadata,
+    isLoading,
+    loadError,
+    paymentTxHash,
     payerConnected,
-    payerChainId
-  } = usePayInvoice(invoice);
-  const expiresAt = invoice.expiresAt;
-  const expiresAtTime = expiresAt ? new Date(expiresAt).getTime() : Number.NaN;
-  const expiryCanChange =
-    invoice.status === "pending" &&
-    !Number.isNaN(expiresAtTime) &&
-    expiresAtTime > now.getTime();
+    connectedAddress
+  } = usePayInvoice(invoiceId);
 
   useEffect(() => {
-    if (!expiryCanChange) return;
-    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    if (!invoice || invoice.status !== 0 || BigInt(now) >= invoice.dueAt) return;
+    const timer = window.setInterval(
+      () => setNow(Math.floor(Date.now() / 1000)),
+      1000
+    );
     return () => window.clearInterval(timer);
-  }, [expiryCanChange]);
+  }, [invoice, now]);
 
-  const effectiveStatus = getInvoiceStatus(invoice, now);
-  const isPaid = effectiveStatus === "paid";
-  const isExpired = effectiveStatus === "expired";
-  const isPaying = !["idle", "success", "error"].includes(stage);
-  const checkoutAuthorization = getCheckoutAuthorization(
-    invoice,
-    connectedPayerWallet,
-    now
-  );
-  const requiresWallet = !payerConnected;
-  const canSubmitPayment = checkoutAuthorization.canPay;
+  if (isLoading) {
+    return (
+      <div className="mx-auto max-w-xl rounded-lg border border-slate-200 bg-white p-8 text-center shadow-card">
+        <h1 className="text-2xl font-bold text-ink">Loading invoice...</h1>
+        <p className="mt-3 text-sm text-muted">Reading Arc Testnet settlement state.</p>
+      </div>
+    );
+  }
 
-  const payerGuardMessage =
-    checkoutAuthorization.payerReason === "merchant_wallet"
-      ? "This merchant wallet created the invoice. Send the payment link to the payer wallet to complete checkout."
-      : checkoutAuthorization.payerReason === "wrong_payer_wallet"
-        ? `This checkout is assigned to ${shortenAddress(checkoutAuthorization.expectedWallet ?? "", 6)}. Switch to that payer wallet before paying.`
-        : checkoutAuthorization.payerReason === "wallet_required"
-          ? "Connect the payer wallet assigned to this invoice before paying."
-          : null;
+  if (!invoice) {
+    return (
+      <div className="mx-auto max-w-xl rounded-lg border border-slate-200 bg-white p-8 text-center shadow-card">
+        <h1 className="text-2xl font-bold text-ink">Invoice not available</h1>
+        <p className="mt-3 text-sm text-red-600">{loadError}</p>
+      </div>
+    );
+  }
 
-  const buttonLabel =
-    isExpired
-      ? "Invoice Expired"
-      : isPaid
-        ? "Already Paid"
-        : checkoutAuthorization.payerReason === "merchant_wallet"
-          ? "Merchant wallet cannot pay"
-          : checkoutAuthorization.payerReason === "wrong_payer_wallet"
-            ? "Switch to payer wallet"
-            : requiresWallet || checkoutAuthorization.payerReason === "wallet_required"
-              ? "Connect payer wallet"
-              : getPaymentButtonLabel(paymentMode);
+  const isPaid = invoice.status === 1;
+  const isExpired = invoice.status === 0 && BigInt(now) >= invoice.dueAt;
+  const isCancelled = invoice.status === 2;
+  const isPaying = !["idle", "success", "error"].includes(state.stage);
+  const correctPayer =
+    connectedAddress && isAddressEqual(getAddress(connectedAddress), invoice.payer);
+  const canPay =
+    payerConnected && correctPayer && invoice.status === 0 && !isExpired && !isPaying;
+  const status = isPaid ? "paid" : isExpired || isCancelled ? "expired" : "pending";
+  const amount = formatUnits(invoice.amount, USDC_DECIMALS);
+
+  const buttonLabel = isPaid
+    ? "Already Paid"
+    : isCancelled
+      ? "Invoice Cancelled"
+      : isExpired
+        ? "Invoice Expired"
+        : !payerConnected
+          ? "Connect payer wallet"
+          : !correctPayer
+            ? "Switch to assigned payer"
+            : isPaying
+              ? stageMessage(state.stage)
+              : "Pay invoice on Arc Testnet";
 
   const handlePay = async () => {
-    if (!canSubmitPayment) return;
-
-    const paidInvoice = await pay();
-    if (paidInvoice) {
-      setTimeout(() => router.push(`/receipt/${invoice.id}`), 700);
+    const result = await pay();
+    if (result) {
+      window.setTimeout(
+        () => router.push(`/receipt/${invoice.id}?tx=${result.txHash}`),
+        700
+      );
     }
   };
 
@@ -107,100 +115,112 @@ export function PaymentPanel({ invoice }: { invoice: Invoice }) {
       <WalletStatusCard audience="payer" />
 
       <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-card sm:p-8">
-      <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-6">
-        <div>
-          <p className="text-sm font-semibold text-arc-600">STFlow Checkout</p>
-          <h1 className="mt-2 text-2xl font-bold text-ink">Pay USDC invoice</h1>
-          <p className="mt-2 text-sm text-muted">
-            {invoice.title} / {invoice.id}
-          </p>
-          <p className="mt-3 inline-flex rounded-full bg-arc-50 px-3 py-1 text-xs font-black text-arc-700">
-            {getPaymentModeLabel(paymentMode)}
-          </p>
-        </div>
-        <StatusBadge status={effectiveStatus} />
-      </div>
-
-      <div className="mt-6 rounded-lg bg-slate-50 p-5">
-        <p className="text-sm text-muted">Amount</p>
-        <p className="mt-1 text-4xl font-bold text-ink">{formatCurrency(invoice.amount)}</p>
-      </div>
-
-      <dl className="mt-6 space-y-4 text-sm">
-        <div className="flex justify-between gap-4">
-          <dt className="text-muted">Merchant Account</dt>
-          <dd className="font-medium text-ink">{shortenAddress(invoice.merchantWallet)}</dd>
-        </div>
-        {invoice.customerWallet ? (
-          <div className="flex justify-between gap-4">
-            <dt className="text-muted">Expected Payer</dt>
-            <dd className="font-medium text-ink">{shortenAddress(invoice.customerWallet)}</dd>
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-6">
+          <div>
+            <p className="text-sm font-semibold text-arc-600">STFlow Checkout</p>
+            <h1 className="mt-2 text-2xl font-bold text-ink">Pay USDC invoice</h1>
+            <p className="mt-2 text-sm text-muted">
+              {metadata?.title ?? "Onchain invoice"} / {shortenAddress(invoice.id, 8)}
+            </p>
+            <p className="mt-3 inline-flex rounded-full bg-arc-50 px-3 py-1 text-xs font-black text-arc-700">
+              Arc Testnet · Registry settlement
+            </p>
           </div>
-        ) : null}
-        <div className="flex justify-between gap-4">
-          <dt className="text-muted">Memo</dt>
-          <dd className="max-w-56 text-right font-medium text-ink">{invoice.memo || "-"}</dd>
+          <StatusBadge status={status} />
         </div>
-        <div className="flex justify-between gap-4">
-          <dt className="text-muted">Status</dt>
-          <dd className="font-medium text-ink">{isExpired ? "Expired" : isPaid ? "Paid" : stageMessage(stage)}</dd>
-        </div>
-        {livePayment ? (
-          <div className="flex justify-between gap-4">
-            <dt className="text-muted">Payer Network</dt>
-            <dd className="font-medium text-ink">
-              {payerConnected ? `Chain ${payerChainId}` : "Wallet not connected"}
-            </dd>
-          </div>
-        ) : null}
-        {txHash ? (
-          <div className="flex justify-between gap-4">
-            <dt className="text-muted">{livePayment ? "Live Tx Hash" : "Mock Tx Hash"}</dt>
-            <dd className="font-medium text-ink">{shortenAddress(txHash)}</dd>
-          </div>
-        ) : null}
-      </dl>
 
-      <div className="mt-8 space-y-3">
+        <div className="mt-6 rounded-lg bg-slate-50 p-5">
+          <p className="text-sm text-muted">Amount</p>
+          <p className="mt-1 text-4xl font-bold text-ink">{formatCurrency(amount)}</p>
+        </div>
+
+        <dl className="mt-6 space-y-4 text-sm">
+          <Row label="Merchant Account" value={shortenAddress(invoice.merchant)} />
+          <Row label="Expected Payer" value={shortenAddress(invoice.payer)} />
+          <Row label="Memo" value={metadata?.memo || "Metadata unavailable"} />
+          <Row
+            label="Status"
+            value={
+              isCancelled
+                ? "Cancelled"
+                : isExpired
+                  ? "Expired"
+                  : isPaid
+                    ? "Paid"
+                    : stageMessage(state.stage)
+            }
+          />
+          <Row label="Network" value={`${ARC_TESTNET.name} (${ARC_TESTNET.chainId})`} />
+        </dl>
+
         <button
-          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-arc-600 px-5 text-sm font-semibold text-white shadow-soft transition hover:bg-arc-500 disabled:cursor-not-allowed disabled:bg-slate-300"
-          disabled={isPaying || !canSubmitPayment}
+          className="mt-8 inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-arc-600 px-5 text-sm font-semibold text-white shadow-soft transition hover:bg-arc-500 disabled:cursor-not-allowed disabled:bg-slate-300"
+          disabled={!canPay}
           onClick={handlePay}
           type="button"
         >
-          {isPaying ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+          {isPaying ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <ArrowRight className="h-4 w-4" />
+          )}
           {buttonLabel}
         </button>
-      </div>
 
-      {payerGuardMessage ? (
-        <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-semibold leading-6 text-amber-800">
-          {payerGuardMessage}
-        </div>
-      ) : null}
+        {!payerConnected ? (
+          <Notice>Connect the payer wallet assigned onchain before paying.</Notice>
+        ) : !correctPayer ? (
+          <Notice>
+            This invoice can only be paid by {shortenAddress(invoice.payer, 6)}.
+          </Notice>
+        ) : null}
 
-      <div className="mt-6 rounded-lg border border-slate-200 bg-white p-4">
-        <div className="flex items-center gap-3">
-          {stage === "success" || isPaid ? (
-            <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-          ) : (
-            <Loader2
-              className={`h-5 w-5 text-arc-600 ${isPaying ? "animate-spin" : ""}`}
-            />
-          )}
-          <p className="text-sm font-semibold text-ink">
-            {isExpired
-              ? "Invoice expired. Create a new payment link."
-              : isPaid
-                ? "Payment successful"
-                : livePayment
-                  ? "Real payment mode is enabled for this checkout."
-                  : stageMessage(stage)}
-          </p>
+        <div className="mt-6 rounded-lg border border-slate-200 bg-white p-4">
+          <div className="flex items-center gap-3">
+            {isPaid || state.stage === "success" ? (
+              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+            ) : (
+              <Loader2
+                className={`h-5 w-5 text-arc-600 ${isPaying ? "animate-spin" : ""}`}
+              />
+            )}
+            <p className="text-sm font-semibold text-ink">
+              {isPaid ? "Payment confirmed on Arc Testnet" : stageMessage(state.stage)}
+            </p>
+          </div>
+          {state.error || loadError ? (
+            <p className="mt-2 text-sm text-red-600">{state.error ?? loadError}</p>
+          ) : null}
+          {paymentTxHash ? (
+            <a
+              className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-arc-700 hover:text-arc-600"
+              href={getArcExplorerTxUrl(paymentTxHash)}
+              rel="noreferrer"
+              target="_blank"
+            >
+              View transaction on Arcscan
+              <ExternalLink className="h-4 w-4" />
+            </a>
+          ) : null}
         </div>
-        {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
       </div>
-      </div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-4">
+      <dt className="text-muted">{label}</dt>
+      <dd className="max-w-64 text-right font-medium text-ink">{value}</dd>
+    </div>
+  );
+}
+
+function Notice({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-semibold leading-6 text-amber-800">
+      {children}
     </div>
   );
 }

@@ -1,169 +1,336 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { isAddress, parseUnits, type Address, type Hash } from "viem";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
-  useAccount,
-  useChainId,
-  usePublicClient,
-  useSwitchChain,
-  useWriteContract
-} from "wagmi";
+  getAccount,
+  getBytecode,
+  getChainId,
+  readContract,
+  switchChain,
+  waitForTransactionReceipt,
+  writeContract
+} from "wagmi/actions";
+import {
+  bytesToHex,
+  createPublicClient,
+  formatUnits,
+  getAddress,
+  http,
+  isAddressEqual,
+  isHex,
+  type Address,
+  type Hex
+} from "viem";
+import { useAccount, useConfig } from "wagmi";
+import { ARC_TESTNET } from "@/lib/arc";
 import { arcTestnet } from "@/lib/chains";
-import { createMockTxHash, markInvoicePaid } from "@/lib/invoice";
-import { syncInvoiceToServer } from "@/lib/invoiceServerClient";
-import { getCheckoutAuthorization } from "@/lib/invoiceStatus";
-import { getPaymentMode, isLivePaymentMode } from "@/lib/paymentMode";
+import { hashInvoiceMetadata, type InvoiceMetadata } from "@/lib/invoiceMetadata";
+import {
+  beginPayment,
+  getPaymentPlan,
+  invoicePaidEvent,
+  reducePaymentState,
+  validateConfirmedPayment,
+  validateInvoicePaid,
+  validatePaymentSnapshot,
+  validatePaymentWrite,
+  type ChainInvoice,
+  type PaymentState
+} from "@/lib/paymentTransaction";
 import { USDC_ADDRESS, USDC_DECIMALS, usdcAbi } from "@/lib/usdc";
-import { payerError } from "@/lib/paymentError";
-import { Invoice } from "@/types/invoice";
 
-export type PaymentStage =
-  | "idle"
-  | "wallet"
-  | "submitted"
-  | "confirming"
-  | "success"
-  | "error";
+const initialState: PaymentState = { stage: "idle" };
+const arcClient = createPublicClient({ chain: arcTestnet, transport: http() });
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+function message(error: unknown) {
+  return error instanceof Error ? error.message : "Unable to pay this invoice.";
+}
 
-export function usePayInvoice(invoice: Invoice) {
-  const paymentMode = getPaymentMode();
-  const livePayment = isLivePaymentMode(paymentMode);
+function requestId(): Hex {
+  return bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+function parseInvoiceId(value: string): Hex {
+  if (!isHex(value) || value.length !== 66) {
+    throw new Error("Invoice ID must be a bytes32 value.");
+  }
+  return value;
+}
+
+function accountSnapshot(config: Parameters<typeof getAccount>[0]) {
+  const account = getAccount(config);
+  return { address: account.address, chainId: getChainId(config) };
+}
+
+type Metadata = InvoiceMetadata;
+
+async function getVerifiedMetadata(id: Hex, expectedHash: Hex) {
+  const response = await fetch(`/api/v1/invoices/${id}`, { cache: "no-store" });
+  if (!response.ok) return undefined;
+
+  const payload = (await response.json()) as { metadata?: Metadata };
+  if (!payload.metadata || hashInvoiceMetadata(payload.metadata) !== expectedHash) {
+    throw new Error("Invoice metadata does not match its onchain hash.");
+  }
+  return payload.metadata;
+}
+
+export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
+  const config = useConfig();
   const { address, isConnected } = useAccount();
-  const chainId = useChainId();
-  const { switchChainAsync } = useSwitchChain();
-  const { writeContractAsync } = useWriteContract();
-  const publicClient = usePublicClient({ chainId: arcTestnet.id });
-  const [stage, setStage] = useState<PaymentStage>("idle");
-  const [txHash, setTxHash] = useState<string>();
-  const [error, setError] = useState<string>();
+  const [state, dispatch] = useReducer(reducePaymentState, initialState);
+  const [invoice, setInvoice] = useState<ChainInvoice>();
+  const [metadata, setMetadata] = useState<Metadata>();
+  const [loadError, setLoadError] = useState<string>();
+  const [isLoading, setIsLoading] = useState(true);
+  const [knownPaymentHash, setKnownPaymentHash] = useState<Hex>();
+  const activeRequest = useRef<Hex | undefined>(undefined);
 
-  const payMockInvoice = useCallback(async () => {
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(undefined);
+
     try {
-      setError(undefined);
+      const id = parseInvoiceId(invoiceId);
+      const { INVOICE_REGISTRY_ADDRESS, invoiceRegistryAbi } = await import(
+        "@/lib/contracts/invoiceRegistry"
+      );
+      const current = (await readContract(config, {
+        address: INVOICE_REGISTRY_ADDRESS,
+        abi: invoiceRegistryAbi,
+        functionName: "getInvoice",
+        args: [id],
+        chainId: ARC_TESTNET.chainId
+      })) as ChainInvoice;
 
-      if (!isConnected || !address) {
-        throw new Error(payerError("wallet_required"));
+      setInvoice(current);
+      try {
+        setMetadata(await getVerifiedMetadata(id, current.metadataHash));
+      } catch (error) {
+        setMetadata(undefined);
+        setLoadError(message(error));
       }
 
-      const authorization = getCheckoutAuthorization(invoice, address);
-      if (!authorization.canPay) {
-        throw new Error(
-          authorization.paymentReason
-            ? "Payment link has expired or is no longer payable."
-            : payerError(authorization.payerReason ?? "wallet_required")
-        );
-      }
+      if (current.status === 1) {
+        try {
+          if (receiptHash) {
+            const receipt = await arcClient.getTransactionReceipt({ hash: receiptHash });
+            validateInvoicePaid(receipt, INVOICE_REGISTRY_ADDRESS, {
+              id,
+              payer: current.payer,
+              merchant: current.merchant,
+              amount: current.amount
+            });
+            setKnownPaymentHash(receiptHash);
+            return;
+          }
 
-      setStage("wallet");
-      await delay(900);
-      setStage("submitted");
-      const mockTxHash = createMockTxHash();
-      setTxHash(mockTxHash);
-      await delay(900);
-      setStage("confirming");
-      await delay(1000);
-      const paidInvoice = markInvoicePaid(invoice.id, address, mockTxHash);
-      if (!paidInvoice) {
-        throw new Error("Invoice is not payable");
+          const logs = await arcClient.getLogs({
+            address: INVOICE_REGISTRY_ADDRESS,
+            event: invoicePaidEvent,
+            args: { id },
+            fromBlock: "earliest",
+            toBlock: "latest"
+          });
+          setKnownPaymentHash(
+            logs.length === 1 ? logs[0].transactionHash : undefined
+          );
+        } catch {
+          setKnownPaymentHash(undefined);
+        }
       }
-      void syncInvoiceToServer(paidInvoice);
-      setStage("success");
-      return paidInvoice;
     } catch (error) {
-      setStage("error");
-      setError(error instanceof Error ? error.message : "Payment failed.");
-      return null;
+      setInvoice(undefined);
+      setMetadata(undefined);
+      setLoadError(message(error));
+    } finally {
+      setIsLoading(false);
     }
-  }, [address, invoice, isConnected]);
+  }, [config, invoiceId, receiptHash]);
 
-  const payLiveInvoice = useCallback(async () => {
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const pay = useCallback(async () => {
+    const paymentRequest = requestId();
+    activeRequest.current = beginPayment(activeRequest.current, paymentRequest);
+    dispatch({ type: "started", requestId: paymentRequest });
+
     try {
-      setError(undefined);
-
-      if (paymentMode === "memo-transfer") {
-        throw new Error("Memo transfer is reserved for the next integration step.");
-      }
-
       if (!isConnected || !address) {
-        throw new Error("Connect a payer wallet before sending real USDC.");
+        throw new Error("Connect the assigned payer wallet before paying.");
       }
 
-      const authorization = getCheckoutAuthorization(invoice, address);
-      if (!authorization.canPay) {
+      const payer = getAddress(address);
+      if (getChainId(config) !== ARC_TESTNET.chainId) {
+        await switchChain(config, { chainId: ARC_TESTNET.chainId });
+      }
+
+      const id = parseInvoiceId(invoiceId);
+      const { INVOICE_REGISTRY_ADDRESS, invoiceRegistryAbi } = await import(
+        "@/lib/contracts/invoiceRegistry"
+      );
+      const code = await getBytecode(config, {
+        address: INVOICE_REGISTRY_ADDRESS,
+        chainId: ARC_TESTNET.chainId
+      });
+      if (!code || code === "0x") {
+        throw new Error("Invoice registry is not deployed on Arc Testnet.");
+      }
+
+      const submitted = (await readContract(config, {
+        address: INVOICE_REGISTRY_ADDRESS,
+        abi: invoiceRegistryAbi,
+        functionName: "getInvoice",
+        args: [id],
+        chainId: ARC_TESTNET.chainId
+      })) as ChainInvoice;
+      validatePaymentSnapshot(
+        submitted,
+        payer,
+        BigInt(Math.floor(Date.now() / 1000))
+      );
+
+      const [balance, allowance] = await Promise.all([
+        readContract(config, {
+          address: USDC_ADDRESS,
+          abi: usdcAbi,
+          functionName: "balanceOf",
+          args: [payer],
+          chainId: ARC_TESTNET.chainId
+        }),
+        readContract(config, {
+          address: USDC_ADDRESS,
+          abi: usdcAbi,
+          functionName: "allowance",
+          args: [payer, INVOICE_REGISTRY_ADDRESS],
+          chainId: ARC_TESTNET.chainId
+        })
+      ]);
+      const plan = getPaymentPlan(balance, allowance, submitted.amount);
+      if (!plan.canPay) {
         throw new Error(
-          authorization.paymentReason
-            ? "Payment link has expired or is no longer payable."
-            : payerError(authorization.payerReason ?? "wallet_required")
+          `Insufficient USDC balance. Required ${formatUnits(submitted.amount, USDC_DECIMALS)} USDC.`
         );
       }
 
-      if (!isAddress(invoice.merchantWallet)) {
-        throw new Error("Merchant wallet is not a valid EVM address.");
-      }
-
-      if (!publicClient) {
-        throw new Error("Public client is not ready.");
-      }
-
-      setStage("wallet");
-      if (chainId !== arcTestnet.id) {
-        await switchChainAsync({ chainId: arcTestnet.id });
-      }
-
-      const amount = parseUnits(invoice.amount, USDC_DECIMALS);
-      const hash = await writeContractAsync({
-        address: USDC_ADDRESS,
-        abi: usdcAbi,
-        functionName: "transfer",
-        args: [invoice.merchantWallet as Address, amount],
-        chainId: arcTestnet.id
+      dispatch({
+        type: "planned",
+        requestId: paymentRequest,
+        needsApproval: plan.needsApproval
       });
 
-      setTxHash(hash);
-      setStage("submitted");
-      setStage("confirming");
-      await publicClient.waitForTransactionReceipt({ hash: hash as Hash });
+      if (plan.needsApproval) {
+        validatePaymentWrite(accountSnapshot(config), payer);
+        const approvalTxHash = await writeContract(config, {
+          address: USDC_ADDRESS,
+          abi: usdcAbi,
+          account: payer,
+          chainId: ARC_TESTNET.chainId,
+          functionName: "approve",
+          args: [INVOICE_REGISTRY_ADDRESS, plan.approvalAmount]
+        });
+        dispatch({
+          type: "approval_hash",
+          requestId: paymentRequest,
+          txHash: approvalTxHash
+        });
+        const approvalReceipt = await waitForTransactionReceipt(config, {
+          chainId: ARC_TESTNET.chainId,
+          hash: approvalTxHash
+        });
+        if (approvalReceipt.status !== "success") {
+          throw new Error("USDC approval transaction reverted.");
+        }
 
-      const paidInvoice = markInvoicePaid(invoice.id, address, hash);
-      if (!paidInvoice) {
-        throw new Error("Invoice is not payable");
+        const approved = await readContract(config, {
+          address: USDC_ADDRESS,
+          abi: usdcAbi,
+          functionName: "allowance",
+          args: [payer, INVOICE_REGISTRY_ADDRESS],
+          chainId: ARC_TESTNET.chainId
+        });
+        if (approved < submitted.amount) {
+          throw new Error("USDC allowance was not updated after approval.");
+        }
+        dispatch({ type: "approval_confirmed", requestId: paymentRequest });
       }
 
-      void syncInvoiceToServer(paidInvoice);
-      setStage("success");
-      return paidInvoice;
-    } catch (error) {
-      setStage("error");
-      setError(error instanceof Error ? error.message : "Payment failed.");
-      return null;
-    }
-  }, [
-    address,
-    chainId,
-    invoice,
-    isConnected,
-    paymentMode,
-    publicClient,
-    switchChainAsync,
-    writeContractAsync
-  ]);
+      validatePaymentWrite(accountSnapshot(config), payer);
+      const latest = (await readContract(config, {
+        address: INVOICE_REGISTRY_ADDRESS,
+        abi: invoiceRegistryAbi,
+        functionName: "getInvoice",
+        args: [id],
+        chainId: ARC_TESTNET.chainId
+      })) as ChainInvoice;
+      validatePaymentSnapshot(latest, payer, BigInt(Math.floor(Date.now() / 1000)));
+      if (
+        latest.id !== submitted.id ||
+        latest.amount !== submitted.amount ||
+        !isAddressEqual(latest.merchant, submitted.merchant)
+      ) {
+        throw new Error("Invoice chain data changed before payment broadcast.");
+      }
 
-  const pay = useCallback(() => {
-    return livePayment ? payLiveInvoice() : payMockInvoice();
-  }, [livePayment, payLiveInvoice, payMockInvoice]);
+      const paymentTxHash = await writeContract(config, {
+        address: INVOICE_REGISTRY_ADDRESS,
+        abi: invoiceRegistryAbi,
+        account: payer,
+        chainId: ARC_TESTNET.chainId,
+        functionName: "payInvoice",
+        args: [id]
+      });
+      dispatch({
+        type: "payment_hash",
+        requestId: paymentRequest,
+        txHash: paymentTxHash
+      });
+
+      const receipt = await waitForTransactionReceipt(config, {
+        chainId: ARC_TESTNET.chainId,
+        hash: paymentTxHash
+      });
+      validateInvoicePaid(receipt, INVOICE_REGISTRY_ADDRESS, {
+        id,
+        payer,
+        merchant: submitted.merchant,
+        amount: submitted.amount
+      });
+
+      const confirmed = (await readContract(config, {
+        address: INVOICE_REGISTRY_ADDRESS,
+        abi: invoiceRegistryAbi,
+        functionName: "getInvoice",
+        args: [id],
+        chainId: ARC_TESTNET.chainId
+      })) as ChainInvoice;
+      validateConfirmedPayment(confirmed, submitted);
+      setInvoice(confirmed);
+      setKnownPaymentHash(paymentTxHash);
+      dispatch({ type: "payment_confirmed", requestId: paymentRequest });
+      return { invoice: confirmed, txHash: paymentTxHash };
+    } catch (error) {
+      dispatch({ type: "failed", requestId: paymentRequest, error: message(error) });
+      return null;
+    } finally {
+      if (activeRequest.current === paymentRequest) {
+        activeRequest.current = undefined;
+      }
+    }
+  }, [address, config, invoiceId, isConnected]);
 
   return {
     pay,
-    stage,
-    txHash,
-    error,
-    paymentMode,
-    livePayment,
+    refresh: load,
+    state,
+    invoice,
+    metadata,
+    isLoading,
+    loadError,
+    paymentTxHash: state.paymentTxHash ?? knownPaymentHash,
     payerConnected: isConnected,
-    payerChainId: chainId,
-    isPaying: !["idle", "success", "error"].includes(stage)
+    connectedAddress: address
   };
 }

@@ -9,10 +9,10 @@ export const USDC_DECIMALS = ARC_USDC_ERC20_DECIMALS;
 export const usdcAbi = [
   {
     type: "function",
-    name: "transfer",
+    name: "approve",
     stateMutability: "nonpayable",
     inputs: [
-      { name: "to", type: "address" },
+      { name: "spender", type: "address" },
       { name: "amount", type: "uint256" }
     ],
     outputs: [{ name: "", type: "bool" }]
@@ -29,6 +29,16 @@ export const usdcAbi = [
     name: "balanceOf",
     stateMutability: "view",
     inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "allowance",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" }
+    ],
     outputs: [{ name: "", type: "uint256" }]
   }
 ] as const;

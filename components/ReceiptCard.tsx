@@ -2,18 +2,35 @@
 
 import { ArrowLeft, Copy, ExternalLink, Printer } from "lucide-react";
 import Link from "next/link";
+import { formatUnits, type Hex } from "viem";
+import { getArcExplorerTxUrl } from "@/lib/arc";
 import { copyToClipboard, formatCurrency, formatDate, shortenAddress } from "@/lib/format";
-import { Receipt } from "@/types/invoice";
+import type { InvoiceMetadata } from "@/lib/invoiceMetadata";
+import type { ChainInvoice } from "@/lib/paymentTransaction";
+import { USDC_DECIMALS } from "@/lib/usdc";
 import { StatusBadge } from "./StatusBadge";
 
-export function ReceiptCard({ receipt }: { receipt: Receipt }) {
+export function ReceiptCard({
+  invoice,
+  metadata,
+  paymentTxHash
+}: {
+  invoice: ChainInvoice;
+  metadata?: InvoiceMetadata;
+  paymentTxHash?: Hex;
+}) {
+  const receiptNumber = `STF-${invoice.id.slice(2, 14).toUpperCase()}`;
+  const paidAt = new Date(Number(invoice.paidAt) * 1000).toISOString();
+
   return (
     <div className="mx-auto max-w-3xl rounded-lg border border-slate-200 bg-white p-6 shadow-card sm:p-8">
       <div className="flex flex-col gap-5 border-b border-slate-200 pb-6 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-sm font-semibold text-arc-600">Payment Receipt</p>
-          <h1 className="mt-2 text-3xl font-bold text-ink">{receipt.receiptNumber}</h1>
-          <p className="mt-2 text-sm text-muted">Commercial USDC payment record for settlement review.</p>
+          <h1 className="mt-2 text-3xl font-bold text-ink">{receiptNumber}</h1>
+          <p className="mt-2 text-sm text-muted">
+            Verified Arc Testnet USDC settlement record.
+          </p>
         </div>
         <StatusBadge status="paid" />
       </div>
@@ -21,37 +38,52 @@ export function ReceiptCard({ receipt }: { receipt: Receipt }) {
       <div className="my-8 rounded-lg bg-slate-50 p-6">
         <p className="text-sm text-muted">Amount paid</p>
         <p className="mt-1 text-4xl font-bold text-ink">
-          {formatCurrency(receipt.amount, receipt.currency)}
+          {formatCurrency(formatUnits(invoice.amount, USDC_DECIMALS), "USDC")}
         </p>
       </div>
 
       <dl className="grid gap-5 text-sm sm:grid-cols-2">
-        <ReceiptItem label="Receipt No" value={receipt.receiptNumber} />
-        <ReceiptItem label="Invoice ID" value={receipt.invoiceId} />
-        <ReceiptItem label="Merchant Account" value={shortenAddress(receipt.merchantWallet, 6)} />
-        <ReceiptItem label="Payer Account" value={shortenAddress(receipt.payerWallet, 6)} />
-        <ReceiptItem label="Transaction Hash" value={shortenAddress(receipt.paymentTxHash, 6)} />
-        <ReceiptItem label="Paid At" value={formatDate(receipt.paidAt)} />
-        <ReceiptItem className="sm:col-span-2" label="Memo" value={receipt.memo || "-"} />
+        <ReceiptItem label="Receipt No" value={receiptNumber} />
+        <ReceiptItem label="Invoice ID" value={invoice.id} />
+        <ReceiptItem label="Merchant Account" value={shortenAddress(invoice.merchant, 6)} />
+        <ReceiptItem label="Payer Account" value={shortenAddress(invoice.payer, 6)} />
+        <ReceiptItem
+          label="Transaction Hash"
+          value={paymentTxHash ? shortenAddress(paymentTxHash, 6) : "Verify by invoice ID"}
+        />
+        <ReceiptItem label="Paid At" value={formatDate(paidAt)} />
+        <ReceiptItem
+          className="sm:col-span-2"
+          label="Memo"
+          value={metadata?.memo || "Metadata unavailable"}
+        />
       </dl>
 
       <div className="no-print mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <button
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-slate-200 px-4 text-sm font-semibold text-ink transition hover:bg-slate-50"
-          onClick={() => copyToClipboard(receipt.paymentTxHash)}
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-slate-200 px-4 text-sm font-semibold text-ink transition hover:bg-slate-50 disabled:opacity-50"
+          disabled={!paymentTxHash}
+          onClick={() => paymentTxHash && copyToClipboard(paymentTxHash)}
           type="button"
         >
           <Copy className="h-4 w-4" />
           Copy Tx Hash
         </button>
-        <button
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-slate-200 px-4 text-sm font-semibold text-ink transition hover:bg-slate-50"
-          onClick={() => copyToClipboard(receipt.paymentTxHash)}
-          type="button"
-        >
-          <ExternalLink className="h-4 w-4" />
-          Copy Proof
-        </button>
+        {paymentTxHash ? (
+          <a
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-slate-200 px-4 text-sm font-semibold text-ink transition hover:bg-slate-50"
+            href={getArcExplorerTxUrl(paymentTxHash)}
+            rel="noreferrer"
+            target="_blank"
+          >
+            <ExternalLink className="h-4 w-4" />
+            View on Arcscan
+          </a>
+        ) : (
+          <span className="inline-flex h-11 items-center justify-center rounded-md border border-slate-200 px-4 text-sm font-semibold text-muted">
+            Tx lookup unavailable
+          </span>
+        )}
         <button
           className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-slate-200 px-4 text-sm font-semibold text-ink transition hover:bg-slate-50"
           onClick={() => window.print()}
