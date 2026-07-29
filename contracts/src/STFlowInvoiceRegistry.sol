@@ -2,8 +2,12 @@
 pragma solidity ^0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-contract STFlowInvoiceRegistry {
+contract STFlowInvoiceRegistry is ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     enum Status {
         Pending,
         Paid,
@@ -27,6 +31,10 @@ contract STFlowInvoiceRegistry {
     error InvalidPayer();
     error InvalidAmount();
     error InvalidDeadline();
+    error UnauthorizedPayer();
+    error UnauthorizedMerchant();
+    error InvoiceNotPending();
+    error InvoiceExpired();
 
     IERC20 public immutable usdc;
 
@@ -40,6 +48,9 @@ contract STFlowInvoiceRegistry {
         uint64 dueAt,
         bytes32 metadataHash
     );
+
+    event InvoicePaid(bytes32 indexed id, address indexed payer, address indexed merchant, uint128 amount);
+    event InvoiceCancelled(bytes32 indexed id, address indexed merchant);
 
     constructor(address usdcAddress) {
         if (usdcAddress == address(0)) revert InvalidUsdc();
@@ -64,6 +75,30 @@ contract STFlowInvoiceRegistry {
         });
 
         emit InvoiceCreated(id, msg.sender, payer, amount, dueAt, metadataHash);
+    }
+
+    function payInvoice(bytes32 id) external nonReentrant {
+        Invoice storage invoice = invoices[id];
+        if (invoice.merchant == address(0)) revert InvoiceNotFound();
+        if (msg.sender != invoice.payer) revert UnauthorizedPayer();
+        if (invoice.status != Status.Pending) revert InvoiceNotPending();
+        if (block.timestamp >= invoice.dueAt) revert InvoiceExpired();
+
+        invoice.status = Status.Paid;
+        invoice.paidAt = uint64(block.timestamp);
+        usdc.safeTransferFrom(msg.sender, invoice.merchant, invoice.amount);
+
+        emit InvoicePaid(id, msg.sender, invoice.merchant, invoice.amount);
+    }
+
+    function cancelInvoice(bytes32 id) external {
+        Invoice storage invoice = invoices[id];
+        if (invoice.merchant == address(0)) revert InvoiceNotFound();
+        if (msg.sender != invoice.merchant) revert UnauthorizedMerchant();
+        if (invoice.status != Status.Pending) revert InvoiceNotPending();
+
+        invoice.status = Status.Cancelled;
+        emit InvoiceCancelled(id, msg.sender);
     }
 
     function getInvoice(bytes32 id) external view returns (Invoice memory invoice) {
