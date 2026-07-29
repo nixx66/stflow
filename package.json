@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
     "test": "node --test tests/*.test.ts",
+    "test:integration": "node tests/runArcIntegration.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

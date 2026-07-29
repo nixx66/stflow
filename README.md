@@ -43,6 +43,31 @@ You can also run:
 pnpm dev
 ```
 
+## Local contract integration
+
+The integration test builds the current contracts, starts an isolated Anvil
+node on an available local port, deploys `MockUSDC` and
+`STFlowInvoiceRegistry`, and exercises invoice creation and assigned-payer
+settlement:
+
+```bash
+npm run test:integration
+```
+
+`forge` and `anvil` must be on `PATH`. On Windows, explicit executable paths
+can be supplied without changing the machine configuration:
+
+```powershell
+$env:FORGE_BIN = "C:\path\to\forge.exe"
+$env:ANVIL_BIN = "C:\path\to\anvil.exe"
+npm.cmd run test:integration
+```
+
+The harness uses Anvil's public deterministic development accounts. Their
+keys are intentionally visible in the test and have no value. Never send
+assets to those addresses, reuse the keys on Arc Testnet or another network,
+or replace them with a wallet private key or recovery phrase.
+
 ## Environment
 
 ```bash
