@@ -5,6 +5,7 @@ import {
   getAccount,
   getBytecode,
   getChainId,
+  signMessage,
   switchChain,
   waitForTransactionReceipt,
   writeContract
@@ -59,11 +60,42 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unable to create the invoice.";
 }
 
-async function persistMetadata(invoice: Invoice, referenceId: Hex, metadataHash: Hex) {
+async function persistMetadata(input: {
+  config: Parameters<typeof getAccount>[0];
+  merchant: Address;
+  txHash: Hex;
+  referenceId: Hex;
+  metadata: InvoiceMetadata;
+}) {
+  const nonceResponse = await fetch("/api/v1/auth/nonce", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      wallet: input.merchant,
+      action: "create_invoice",
+      txHash: input.txHash,
+      referenceId: input.referenceId,
+      metadata: input.metadata
+    })
+  });
+  if (!nonceResponse.ok) {
+    throw new Error("Onchain invoice created, but metadata authorization is pending.");
+  }
+  const { challenge } = (await nonceResponse.json()) as { challenge: string };
+  const signature = await signMessage(input.config, {
+    account: input.merchant,
+    message: challenge
+  });
   const response = await fetch("/api/v1/invoices/metadata", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ invoice, referenceId, metadataHash })
+    body: JSON.stringify({
+      txHash: input.txHash,
+      referenceId: input.referenceId,
+      metadata: input.metadata,
+      challenge,
+      signature
+    })
   });
 
   if (!response.ok) {
@@ -189,7 +221,13 @@ export function useCreateInvoice() {
         let metadataPending = false;
         let metadataError: string | undefined;
         try {
-          await persistMetadata(invoice, referenceId, metadataHash);
+          await persistMetadata({
+            config,
+            merchant,
+            txHash,
+            referenceId,
+            metadata
+          });
         } catch (error) {
           metadataPending = true;
           metadataError = errorMessage(error);

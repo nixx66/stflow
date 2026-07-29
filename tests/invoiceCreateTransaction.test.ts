@@ -330,6 +330,9 @@ test("creation flow is chain-backed and isolated from the legacy invoice route",
   assert.match(hook, /activeRequest/);
   assert.match(hook, /getAccount|getChainId/);
   assert.match(hook, /\/api\/v1\/invoices\/metadata/);
+  assert.match(hook, /\/api\/v1\/auth\/nonce/);
+  assert.match(hook, /signMessage/);
+  assert.doesNotMatch(hook, /JSON\.stringify\(\{\s*invoice,/);
   assert.doesNotMatch(hook, /\/api\/invoices/);
   assert.doesNotMatch(form, /MOCK_MERCHANT_A|useInvoices|createMockInvoice/);
   assert.match(form, /latestRequest/);
