@@ -20,6 +20,7 @@ import {
   normalizeInvoiceId,
   reducePaymentState,
   resolvePaymentProof,
+  selectInvoiceRoute,
   selectInvoiceScope,
   validateRegistryUsdc,
   validateConfirmedPayment,
@@ -336,6 +337,16 @@ test("selects scoped state synchronously only for the current invoice id", () =>
   assert.equal(selectInvoiceScope("not-an-id", scoped), undefined);
 });
 
+test("returns a synchronous terminal route state for malformed invoice ids", () => {
+  assert.deepEqual(selectInvoiceRoute("not-an-invoice"), {
+    isLoading: false,
+    error: "Invoice ID must be a bytes32 value."
+  });
+  assert.deepEqual(selectInvoiceRoute(ID.toUpperCase()), {
+    invoiceId: ID
+  });
+});
+
 test("preserves broadcast hashes through confirmation and later wallet changes", () => {
   let state = reducePaymentState(
     { stage: "idle" },
@@ -372,10 +383,11 @@ test("preserves broadcast hashes through confirmation and later wallet changes",
 });
 
 test("payment hook contains no mock settlement or direct transfer path", async () => {
-  const [hook, payPage, receiptPage] = await Promise.all([
+  const [hook, payPage, receiptPage, receiptCard] = await Promise.all([
     readFile("hooks/usePayInvoice.ts", "utf8"),
     readFile("app/pay/[invoiceId]/page.tsx", "utf8"),
-    readFile("app/receipt/[invoiceId]/page.tsx", "utf8")
+    readFile("app/receipt/[invoiceId]/page.tsx", "utf8"),
+    readFile("components/ReceiptCard.tsx", "utf8")
   ]);
   assert.match(hook, /getInvoice/);
   assert.match(hook, /functionName:\s*"usdc"/);
@@ -390,4 +402,6 @@ test("payment hook contains no mock settlement or direct transfer path", async (
   assert.match(payPage, /key=\{params\.invoiceId\.toLowerCase\(\)\}/);
   assert.match(receiptPage, /proofReady[\s\S]*<ReceiptCard/);
   assert.match(receiptPage, /key=\{params\.invoiceId\.toLowerCase\(\)\}/);
+  assert.match(receiptCard, /proof:\s*VerifiedPaymentProof/);
+  assert.doesNotMatch(receiptCard, /paymentTxHash\?:|Tx lookup unavailable|Verify by invoice ID/);
 });

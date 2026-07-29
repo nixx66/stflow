@@ -33,6 +33,7 @@ import {
   normalizeInvoiceId,
   reducePaymentState,
   resolvePaymentProof,
+  selectInvoiceRoute,
   selectInvoiceScope,
   validateConfirmedPayment,
   validateInvoicePaid,
@@ -436,13 +437,8 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
     }
   }, [address, config, invoiceId, isConnected]);
 
-  const currentId = (() => {
-    try {
-      return parseInvoiceId(invoiceId);
-    } catch {
-      return undefined;
-    }
-  })();
+  const route = selectInvoiceRoute(invoiceId);
+  const currentId = route.invoiceId;
   const scopedInvoice =
     currentId && loadedInvoiceId
       ? selectInvoiceScope(currentId, { invoiceId: loadedInvoiceId, value: invoice })
@@ -474,12 +470,16 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
     state: scopedState ?? { stage: "idle" as const, invoiceId: currentId },
     invoice: scopedInvoice?.value,
     metadata: scopedMetadata?.value,
-    isLoading: loadingMatches ? isLoading : true,
-    loadError: scopedError?.value,
-    proof: scopedProof ?? {
-      invoiceId: currentId,
-      status: "idle" as const
-    },
+    isLoading:
+      "error" in route ? route.isLoading : loadingMatches ? isLoading : true,
+    loadError: "error" in route ? route.error : scopedError?.value,
+    proof:
+      "error" in route
+        ? { status: "error" as const, error: route.error }
+        : scopedProof ?? {
+            invoiceId: currentId,
+            status: "idle" as const
+          },
     paymentTxHash:
       scopedProof?.status === "verified" ? scopedProof.txHash : undefined,
     payerConnected: isConnected,

@@ -34,11 +34,14 @@ function ReceiptContent({ invoiceId }: { invoiceId: string }) {
             <h1 className="text-2xl font-bold text-ink">Loading receipt...</h1>
             <p className="mt-3 text-sm text-muted">Verifying Arc Testnet settlement state.</p>
           </div>
-        ) : receiptReady && proofReady && payment.invoice && payment.paymentTxHash ? (
+        ) : receiptReady &&
+          proofReady &&
+          payment.invoice &&
+          payment.proof?.status === "verified" ? (
           <ReceiptCard
             invoice={payment.invoice}
             metadata={payment.metadata}
-            paymentTxHash={payment.paymentTxHash}
+            proof={payment.proof}
           />
         ) : (
           <div className="mx-auto max-w-xl rounded-lg border border-slate-200 bg-white p-8 text-center shadow-card">

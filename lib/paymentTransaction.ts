@@ -21,6 +21,10 @@ export type ChainInvoice = {
 };
 
 export type ChainInvoiceState = "pending" | "paid" | "cancelled";
+export type VerifiedPaymentProof = {
+  status: "verified";
+  txHash: Hex;
+};
 
 export type PaymentStage =
   | "idle"
@@ -140,6 +144,20 @@ export function selectInvoiceScope<T extends { invoiceId?: Hex }>(
       : undefined;
   } catch {
     return undefined;
+  }
+}
+
+export function selectInvoiceRoute(invoiceId: string) {
+  try {
+    return { invoiceId: normalizeInvoiceId(invoiceId) };
+  } catch (error) {
+    return {
+      isLoading: false as const,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Invoice ID must be a bytes32 value."
+    };
   }
 }
 
