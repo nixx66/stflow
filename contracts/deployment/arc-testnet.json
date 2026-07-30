@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "network": "arc-testnet",
+  "chainId": 5042002,
+  "rpcUrl": "https://rpc.testnet.arc.network",
+  "explorerUrl": "https://testnet.arcscan.app",
+  "address": "0x5dBcc64dDd280df36759E80e1C265539cc4AE428",
+  "transactionHash": "0xfe67efcfe5983eb31dc5135577202ab02820eb6d3024707c61d65c4a07feef96",
+  "block": {
+    "number": 54373531,
+    "hash": "0x851ee919bc44645bcc8779bc10fffb979e251e2465ef6c84a57e1e8cb75062e1"
+  },
+  "deployer": "0x28ebF7EA9632406F335d130C48D9b479B1A070aD",
+  "constructor": {
+    "usdc": "0x3600000000000000000000000000000000000000"
+  },
+  "compiler": {
+    "settings": {
+      "evmVersion": "osaka",
+      "libraries": {},
+      "metadata": {
+        "appendCBOR": true,
+        "bytecodeHash": "ipfs",
+        "useLiteralContent": false
+      },
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode.object",
+            "evm.bytecode.sourceMap",
+            "evm.bytecode.linkReferences",
+            "evm.deployedBytecode.object",
+            "evm.deployedBytecode.sourceMap",
+            "evm.deployedBytecode.linkReferences",
+            "evm.deployedBytecode.immutableReferences",
+            "evm.methodIdentifiers",
+            "metadata"
+          ]
+        }
+      },
+      "remappings": [
+        "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+        "erc4626-tests/=lib/openzeppelin-contracts/lib/erc4626-tests/",
+        "forge-std/=lib/openzeppelin-contracts/lib/forge-std/src/",
+        "halmos-cheatcodes/=lib/openzeppelin-contracts/lib/halmos-cheatcodes/src/",
+        "openzeppelin-contracts/=lib/openzeppelin-contracts/"
+      ],
+      "viaIR": false
+    },
+    "version": "0.8.30+commit.73712a01"
+  },
+  "source": {
+    "commit": "27653eca4ace99307d8e4dec8639b02d4617b0b2",
+    "target": "contracts/src/STFlowInvoiceRegistry.sol:STFlowInvoiceRegistry",
+    "standardJsonSha256": "f387e66a9af9da277149973535cf0dccf06a9ebfea69e5a4379ecf34d924b91b"
+  },
+  "codeHashes": {
+    "deployed": "0x7300602c8db218119d8626aca87f85ee85a84e4b7106e613ed88b57683f5d15b",
+    "artifactTemplate": "0xa2f324df83d4788f679bad0cc5ae1b88d9b463aa3a05533a33cb1eae4bc311ee",
+    "creationData": "0x53ef60221a4ccfa9d84ec794b32ad1a6c899785a21ff046880ce84425e9189ea"
+  },
+  "request": {
+    "checksum": {
+      "algorithm": "sha256",
+      "value": "6d85ef4a0df74e5e1bc82baacb6e906699070b83a1539c6974d051aa631b0031"
+    },
+    "creationDataBytes": 3664
+  },
+  "validatedAt": "2026-07-30T05:21:14.040Z",
+  "verification": {
+    "bytecode": true,
+    "constructor": true,
+    "usdcDecimals": true,
+    "sourceCode": true
+  }
+}
