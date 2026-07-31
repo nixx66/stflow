@@ -1,5 +1,5 @@
 import { defineChain } from "viem";
-import { ARC_TESTNET } from "./arc";
+import { ARC_TESTNET } from "./arc.ts";
 
 export const arcTestnet = defineChain({
   id: ARC_TESTNET.chainId,
