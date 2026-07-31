@@ -566,7 +566,7 @@ test("migration installs an atomic service-only event projection", async () => {
   assert.match(sql, /revoke all[\s\S]*from public, anon, authenticated/i);
 });
 
-test("cron route is private, node-only, and scheduled every minute", async () => {
+test("cron route is private, node-only, and scheduled daily", async () => {
   const [route, syncSource, vercel] = await Promise.all([
     readFile("app/api/internal/sync-chain/route.ts", "utf8"),
     readFile("lib/server/syncInvoiceEvents.ts", "utf8"),
@@ -582,6 +582,6 @@ test("cron route is private, node-only, and scheduled every minute", async () =>
   assert.match(syncSource, /Promise\.all/);
   assert.match(syncSource, /log\.removed === true/);
   assert.deepEqual(JSON.parse(vercel), {
-    crons: [{ path: "/api/internal/sync-chain", schedule: "* * * * *" }]
+    crons: [{ path: "/api/internal/sync-chain", schedule: "0 0 * * *" }]
   });
 });
