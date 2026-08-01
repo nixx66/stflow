@@ -21,6 +21,11 @@ import {
 } from "viem";
 import { useAccount, useConfig } from "wagmi";
 import { ARC_TESTNET } from "@/lib/arc";
+import {
+  ARC_BUSY_MESSAGE,
+  isTransientArcRpcError,
+  retryArcRead
+} from "@/lib/arcRpcRetry";
 import { arcTestnet } from "@/lib/chains";
 import { hashInvoiceMetadata, type InvoiceMetadata } from "@/lib/invoiceMetadata";
 import {
@@ -54,6 +59,7 @@ export type PaymentProof =
   | { invoiceId: Hex; status: "error"; error: string };
 
 function message(error: unknown) {
+  if (isTransientArcRpcError(error)) return ARC_BUSY_MESSAGE;
   return error instanceof Error ? error.message : "Unable to pay this invoice.";
 }
 
@@ -137,13 +143,15 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
       const { INVOICE_REGISTRY_ADDRESS, invoiceRegistryAbi } = await import(
         "@/lib/contracts/invoiceRegistry"
       );
-      const chainInvoice = (await readContract(config, {
-        address: INVOICE_REGISTRY_ADDRESS,
-        abi: invoiceRegistryAbi,
-        functionName: "getInvoice",
-        args: [id],
-        chainId: ARC_TESTNET.chainId
-      })) as ChainInvoice;
+      const chainInvoice = (await retryArcRead(() =>
+        readContract(config, {
+          address: INVOICE_REGISTRY_ADDRESS,
+          abi: invoiceRegistryAbi,
+          functionName: "getInvoice",
+          args: [id],
+          chainId: ARC_TESTNET.chainId
+        })
+      )) as ChainInvoice;
       if (normalizeInvoiceId(chainInvoice.id) !== id) {
         throw new Error("Registry returned a different invoice ID.");
       }
@@ -262,29 +270,35 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
         "@/lib/contracts/invoiceRegistry"
       );
       const [code, registryUsdc] = await Promise.all([
-        getBytecode(config, {
-          address: INVOICE_REGISTRY_ADDRESS,
-          chainId: ARC_TESTNET.chainId
-        }),
-        readContract(config, {
-          address: INVOICE_REGISTRY_ADDRESS,
-          abi: invoiceRegistryAbi,
-          functionName: "usdc",
-          chainId: ARC_TESTNET.chainId
-        })
+        retryArcRead(() =>
+          getBytecode(config, {
+            address: INVOICE_REGISTRY_ADDRESS,
+            chainId: ARC_TESTNET.chainId
+          })
+        ),
+        retryArcRead(() =>
+          readContract(config, {
+            address: INVOICE_REGISTRY_ADDRESS,
+            abi: invoiceRegistryAbi,
+            functionName: "usdc",
+            chainId: ARC_TESTNET.chainId
+          })
+        )
       ]);
       if (!code || code === "0x") {
         throw new Error("Invoice registry is not deployed on Arc Testnet.");
       }
       validateRegistryUsdc(registryUsdc);
 
-      const submitted = (await readContract(config, {
-        address: INVOICE_REGISTRY_ADDRESS,
-        abi: invoiceRegistryAbi,
-        functionName: "getInvoice",
-        args: [id],
-        chainId: ARC_TESTNET.chainId
-      })) as ChainInvoice;
+      const submitted = (await retryArcRead(() =>
+        readContract(config, {
+          address: INVOICE_REGISTRY_ADDRESS,
+          abi: invoiceRegistryAbi,
+          functionName: "getInvoice",
+          args: [id],
+          chainId: ARC_TESTNET.chainId
+        })
+      )) as ChainInvoice;
       if (normalizeInvoiceId(submitted.id) !== id) {
         throw new Error("Registry returned a different invoice ID.");
       }
@@ -295,20 +309,24 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
       );
 
       const [balance, allowance] = await Promise.all([
-        readContract(config, {
-          address: USDC_ADDRESS,
-          abi: usdcAbi,
-          functionName: "balanceOf",
-          args: [payer],
-          chainId: ARC_TESTNET.chainId
-        }),
-        readContract(config, {
-          address: USDC_ADDRESS,
-          abi: usdcAbi,
-          functionName: "allowance",
-          args: [payer, INVOICE_REGISTRY_ADDRESS],
-          chainId: ARC_TESTNET.chainId
-        })
+        retryArcRead(() =>
+          readContract(config, {
+            address: USDC_ADDRESS,
+            abi: usdcAbi,
+            functionName: "balanceOf",
+            args: [payer],
+            chainId: ARC_TESTNET.chainId
+          })
+        ),
+        retryArcRead(() =>
+          readContract(config, {
+            address: USDC_ADDRESS,
+            abi: usdcAbi,
+            functionName: "allowance",
+            args: [payer, INVOICE_REGISTRY_ADDRESS],
+            chainId: ARC_TESTNET.chainId
+          })
+        )
       ]);
       const plan = getPaymentPlan(balance, allowance, submitted.amount);
       if (!plan.canPay) {
@@ -349,26 +367,30 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
           throw new Error("USDC approval transaction reverted.");
         }
 
-        const approved = await readContract(config, {
-          address: USDC_ADDRESS,
-          abi: usdcAbi,
-          functionName: "allowance",
-          args: [payer, INVOICE_REGISTRY_ADDRESS],
-          chainId: ARC_TESTNET.chainId
-        });
+        const approved = await retryArcRead(() =>
+          readContract(config, {
+            address: USDC_ADDRESS,
+            abi: usdcAbi,
+            functionName: "allowance",
+            args: [payer, INVOICE_REGISTRY_ADDRESS],
+            chainId: ARC_TESTNET.chainId
+          })
+        );
         if (approved < submitted.amount) {
           throw new Error("USDC allowance was not updated after approval.");
         }
         dispatch({ type: "approval_confirmed", requestId: paymentRequest });
       }
 
-      const latest = (await readContract(config, {
-        address: INVOICE_REGISTRY_ADDRESS,
-        abi: invoiceRegistryAbi,
-        functionName: "getInvoice",
-        args: [id],
-        chainId: ARC_TESTNET.chainId
-      })) as ChainInvoice;
+      const latest = (await retryArcRead(() =>
+        readContract(config, {
+          address: INVOICE_REGISTRY_ADDRESS,
+          abi: invoiceRegistryAbi,
+          functionName: "getInvoice",
+          args: [id],
+          chainId: ARC_TESTNET.chainId
+        })
+      )) as ChainInvoice;
       validatePaymentSnapshot(latest, payer, BigInt(Math.floor(Date.now() / 1000)));
       if (
         normalizeInvoiceId(latest.id) !== normalizeInvoiceId(submitted.id) ||
@@ -407,13 +429,15 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
         amount: submitted.amount
       });
 
-      const confirmed = (await readContract(config, {
-        address: INVOICE_REGISTRY_ADDRESS,
-        abi: invoiceRegistryAbi,
-        functionName: "getInvoice",
-        args: [id],
-        chainId: ARC_TESTNET.chainId
-      })) as ChainInvoice;
+      const confirmed = (await retryArcRead(() =>
+        readContract(config, {
+          address: INVOICE_REGISTRY_ADDRESS,
+          abi: invoiceRegistryAbi,
+          functionName: "getInvoice",
+          args: [id],
+          chainId: ARC_TESTNET.chainId
+        })
+      )) as ChainInvoice;
       validateConfirmedPayment(confirmed, submitted);
       const stale = invoiceKey.current !== id;
       if (!stale) {
@@ -464,9 +488,14 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
     loadingInvoiceId &&
     selectInvoiceScope(currentId, { invoiceId: loadingInvoiceId });
 
+  const refresh = useCallback(async () => {
+    if (currentId) dispatch({ type: "reset", invoiceId: currentId });
+    await load();
+  }, [currentId, load]);
+
   return {
     pay,
-    refresh: load,
+    refresh,
     state: scopedState ?? { stage: "idle" as const, invoiceId: currentId },
     invoice: scopedInvoice?.value,
     metadata: scopedMetadata?.value,

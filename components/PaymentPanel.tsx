@@ -7,6 +7,7 @@ import { isAddressEqual } from "viem";
 import { getAddress } from "viem";
 import { usePayInvoice } from "@/hooks/usePayInvoice";
 import { ARC_TESTNET, getArcExplorerTxUrl } from "@/lib/arc";
+import { ARC_BUSY_MESSAGE } from "@/lib/arcRpcRetry";
 import { shortenAddress } from "@/lib/format";
 import { formatUsdc } from "@/lib/paymentTransaction";
 import { StatusBadge } from "./StatusBadge";
@@ -38,6 +39,7 @@ export function PaymentPanel({ invoiceId }: { invoiceId: string }) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const {
     pay,
+    refresh,
     state,
     invoice,
     metadata,
@@ -47,6 +49,8 @@ export function PaymentPanel({ invoiceId }: { invoiceId: string }) {
     payerConnected,
     connectedAddress
   } = usePayInvoice(invoiceId);
+
+  const retry = () => void refresh();
 
   useEffect(() => {
     if (!invoice || invoice.status !== 0 || BigInt(now) >= invoice.dueAt) return;
@@ -70,7 +74,14 @@ export function PaymentPanel({ invoiceId }: { invoiceId: string }) {
     return (
       <div className="mx-auto max-w-xl rounded-lg border border-slate-200 bg-white p-8 text-center shadow-card">
         <h1 className="text-2xl font-bold text-ink">Invoice not available</h1>
-        <p className="mt-3 text-sm text-red-600">{loadError}</p>
+        <p className="mt-3 text-sm text-red-600">
+          {loadError ?? ARC_BUSY_MESSAGE}
+        </p>
+        <button
+          className="mt-4 text-sm font-semibold text-arc-700 underline"
+          onClick={retry}
+          type="button"
+        >Retry</button>
       </div>
     );
   }
@@ -196,7 +207,14 @@ export function PaymentPanel({ invoiceId }: { invoiceId: string }) {
             </p>
           </div>
           {state.error || loadError ? (
-            <p className="mt-2 text-sm text-red-600">{state.error ?? loadError}</p>
+            <div className="mt-2">
+              <p className="text-sm text-red-600">{state.error ?? loadError}</p>
+              <button
+                className="mt-2 text-sm font-semibold text-arc-700 underline"
+                onClick={retry}
+                type="button"
+              >Retry</button>
+            </div>
           ) : null}
           {paymentTxHash ? (
             <a
