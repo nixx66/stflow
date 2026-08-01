@@ -3,13 +3,13 @@ import { getAddress, isAddress, type Address } from "viem";
 function registryAddress(): Address {
   const value = process.env.NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS;
 
-  if (!value || !isAddress(value, { strict: true })) {
+  if (!value || !isAddress(value)) {
     throw new Error(
-      "NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS must be a checksummed or lowercase address"
+      "NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS must be a valid address"
     );
   }
 
-  return getAddress(value);
+  return getAddress(value.toLowerCase());
 }
 
 export const INVOICE_REGISTRY_ADDRESS = registryAddress();

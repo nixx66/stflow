@@ -1,18 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPublicClient, getAddress, http, type Hex } from "viem";
+import { getAddress, type Address, type Hex } from "viem";
 import { useAccount } from "wagmi";
-import { arcTestnet } from "@/lib/chains";
 import type { InvoiceMetadata } from "@/lib/invoiceMetadata";
 import {
   fetchWalletInvoices,
   type MetadataResult
 } from "@/lib/onchainInvoices";
 import type { ChainInvoice } from "@/lib/paymentTransaction";
+import type { SerializedChainInvoice } from "@/lib/server/walletInvoiceResponse";
 import type { Invoice } from "@/types/invoice";
-
-const client = createPublicClient({ chain: arcTestnet, transport: http() });
 
 export type InvoiceLoadStatus =
   | "disconnected"
@@ -47,6 +45,30 @@ async function metadataBatch(ids: readonly Hex[], signal?: AbortSignal) {
   return results;
 }
 
+function chainInvoice(invoice: SerializedChainInvoice): ChainInvoice {
+  return {
+    ...invoice,
+    merchant: invoice.merchant as Address,
+    payer: invoice.payer as Address,
+    amount: BigInt(invoice.amount),
+    createdAt: BigInt(invoice.createdAt),
+    dueAt: BigInt(invoice.dueAt),
+    paidAt: BigInt(invoice.paidAt)
+  };
+}
+
+async function walletChainInvoices(wallet: Address, signal?: AbortSignal) {
+  const response = await fetch(`/api/v1/invoices/wallet/${wallet}`, {
+    cache: "no-store",
+    signal
+  });
+  if (!response.ok) {
+    throw new Error("Arc Testnet data is temporarily unavailable. Please try again.");
+  }
+  const payload = (await response.json()) as { invoices?: SerializedChainInvoice[] };
+  return (payload.invoices ?? []).map(chainInvoice);
+}
+
 export function useInvoices() {
   const { address, isConnected } = useAccount();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -71,34 +93,20 @@ export function useInvoices() {
     setInvoices([]);
     setStatus("loading");
     try {
-      const { INVOICE_REGISTRY_ADDRESS, invoiceRegistryAbi } = await import(
-        "@/lib/contracts/invoiceRegistry"
-      );
       const wallet = getAddress(address);
+      const chainInvoices = await walletChainInvoices(wallet, controller.signal);
+      const byId = new Map(chainInvoices.map((invoice) => [invoice.id, invoice]));
       const result = await fetchWalletInvoices(
         wallet,
         {
-          count: () =>
-            client.readContract({
-              address: INVOICE_REGISTRY_ADDRESS,
-              abi: invoiceRegistryAbi,
-              functionName: "invoiceCount",
-              args: [wallet]
-            }),
-          page: (_wallet, offset, limit) =>
-            client.readContract({
-              address: INVOICE_REGISTRY_ADDRESS,
-              abi: invoiceRegistryAbi,
-              functionName: "getInvoiceIds",
-              args: [wallet, offset, limit]
-            }),
-          invoice: (id) =>
-            client.readContract({
-              address: INVOICE_REGISTRY_ADDRESS,
-              abi: invoiceRegistryAbi,
-              functionName: "getInvoice",
-              args: [id]
-            }) as Promise<ChainInvoice>,
+          count: async () => BigInt(chainInvoices.length),
+          page: async (_wallet, offset, limit) =>
+            chainInvoices.slice(Number(offset), Number(offset + limit)).map((invoice) => invoice.id),
+          invoice: async (id) => {
+            const invoice = byId.get(id);
+            if (!invoice) throw new Error("Invoice is unavailable.");
+            return invoice;
+          },
           metadataBatch
         },
         controller.signal
@@ -110,11 +118,11 @@ export function useInvoices() {
           ? "partial"
           : "ready"
       );
-    } catch (cause) {
+    } catch {
       if (request !== generation.current || controller.signal.aborted) return;
       setInvoices([]);
       setStatus("error");
-      setError(cause instanceof Error ? cause.message : "Unable to load Arc invoices.");
+      setError("Arc Testnet data is temporarily unavailable. Please try again.");
     }
   }, [address, isConnected]);
 

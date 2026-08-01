@@ -26,3 +26,17 @@ test("console pages return a state surface before rendering zero metrics", () =>
     assert.match(page, /role=\{status === "error" \? "alert" : "status"\}/);
   }
 });
+
+test("browser invoice loading uses the internal wallet API and hides raw RPC errors", () => {
+  const hook = readFileSync("hooks/useInvoice.ts", "utf8");
+  assert.match(hook, /\/api\/v1\/invoices\/wallet\//);
+  assert.doesNotMatch(hook, /client\.readContract/);
+  assert.doesNotMatch(hook, /cause\.message/);
+  assert.match(hook, /Arc Testnet data is temporarily unavailable\. Please try again\./);
+});
+
+test("registry config normalizes legacy mixed-case deployment values", () => {
+  const source = readFileSync("lib/contracts/invoiceRegistry.ts", "utf8");
+  assert.match(source, /getAddress\(value\.toLowerCase\(\)\)/);
+  assert.doesNotMatch(source, /strict:\s*true/);
+});
