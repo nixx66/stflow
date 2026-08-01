@@ -5,6 +5,7 @@ import { Wallet } from "lucide-react";
 import { arcTestnet } from "@/lib/chains";
 import { getWalletNetworkLabel } from "@/lib/walletDisplay";
 import { WalletAccountPopover } from "./WalletAccountPopover";
+import { WalletNetworkSwitch } from "./WalletNetworkSwitch";
 
 type WalletConnectControlProps = {
   label?: string;
@@ -27,7 +28,7 @@ export function WalletConnectControl({
 
   return (
     <ConnectButton.Custom>
-      {({ account, chain, mounted, openChainModal, openConnectModal }) => {
+      {({ account, chain, mounted, openConnectModal }) => {
         const ready = mounted;
         const connected = ready && account && chain;
         const chainLabel = getWalletNetworkLabel(chain?.id, arcTestnet.id);
@@ -43,10 +44,10 @@ export function WalletConnectControl({
 
         if (chain.unsupported || chain.id !== arcTestnet.id) {
           return (
-            <button className={`${baseClass} ${height} border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100`} onClick={openChainModal} type="button">
-              <Wallet className="h-4 w-4" />
-              {chainLabel}
-            </button>
+            <WalletNetworkSwitch
+              buttonClassName={`${baseClass} ${height}`}
+              label={chainLabel}
+            />
           );
         }
 
