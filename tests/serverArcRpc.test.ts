@@ -39,6 +39,13 @@ test("routes every server-side Arc read through the shared failover client", asy
   }
 });
 
+test("reads wallet invoices in bounded batches instead of one RPC burst", async () => {
+  const source = await readFile("lib/server/readWalletInvoices.ts", "utf8");
+
+  assert.doesNotMatch(source, /Promise\.all\(ids\.map/);
+  assert.match(source, /invoiceReadBatchSize/);
+});
+
 function startRpcServer(reply: RpcReply, token: string): Promise<RpcServer> {
   let requestCount = 0;
   const server = createServer(async (request, response) => {

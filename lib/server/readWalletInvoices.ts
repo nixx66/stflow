@@ -5,6 +5,8 @@ import { createArcServerClient } from "./arcRpc.ts";
 import { walletInvoiceIds } from "../onchainInvoices.ts";
 import type { ChainInvoice } from "../paymentTransaction.ts";
 
+const invoiceReadBatchSize = 3;
+
 export async function readWalletChainInvoices(wallet: Address) {
   const { INVOICE_REGISTRY_ADDRESS, invoiceRegistryAbi } = await import("../contracts/invoiceRegistry.ts");
   const client = createArcServerClient();
@@ -22,10 +24,15 @@ export async function readWalletChainInvoices(wallet: Address) {
       args: [address, offset, limit]
     })
   });
-  return Promise.all(ids.map((id: Hex) => client.readContract({
-    address: INVOICE_REGISTRY_ADDRESS,
-    abi: invoiceRegistryAbi,
-    functionName: "getInvoice",
-    args: [id]
-  }) as Promise<ChainInvoice>));
+  const invoices: ChainInvoice[] = [];
+  for (let offset = 0; offset < ids.length; offset += invoiceReadBatchSize) {
+    const batch = ids.slice(offset, offset + invoiceReadBatchSize);
+    invoices.push(...await Promise.all(batch.map((id: Hex) => client.readContract({
+      address: INVOICE_REGISTRY_ADDRESS,
+      abi: invoiceRegistryAbi,
+      functionName: "getInvoice",
+      args: [id]
+    }) as Promise<ChainInvoice>)));
+  }
+  return invoices;
 }

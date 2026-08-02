@@ -19,6 +19,27 @@ type WalletInvoiceBody = {
   error?: string;
 };
 
+const retryDelays = [250, 750] as const;
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readWithRetry(
+  wallet: Address,
+  read: (wallet: Address) => Promise<ChainInvoice[]>
+) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await read(wallet);
+    } catch (error) {
+      const delay = retryDelays[attempt];
+      if (delay === undefined) throw error;
+      await wait(delay);
+    }
+  }
+}
+
 export async function walletInvoiceResponse(
   wallet: string,
   read: (wallet: Address) => Promise<ChainInvoice[]>
@@ -30,7 +51,7 @@ export async function walletInvoiceResponse(
     };
   }
   try {
-    const invoices = await read(getAddress(wallet));
+    const invoices = await readWithRetry(getAddress(wallet), read);
     return {
       status: 200,
       body: {

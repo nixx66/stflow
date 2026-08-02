@@ -51,6 +51,18 @@ test("sanitizes Arc failures", async () => {
   assert.doesNotMatch(JSON.stringify(response.body), /rpc\.testnet|calldata|deadbeef/i);
 });
 
+test("retries a transient wallet read before returning an Arc failure", async () => {
+  let attempts = 0;
+  const response = await walletInvoiceResponse(wallet, async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("temporary Arc RPC failure");
+    return [];
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(attempts, 2);
+});
+
 test("defers deployment configuration until a wallet request is handled", () => {
   const source = readFileSync("lib/server/readWalletInvoices.ts", "utf8");
   assert.match(source, /await import\("\.\.\/contracts\/invoiceRegistry\.ts"\)/);
