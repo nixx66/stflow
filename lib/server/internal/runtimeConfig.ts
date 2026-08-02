@@ -119,7 +119,7 @@ function normalizeAddress(value: string | undefined) {
 
 function normalizeArcRpcUrl(value: string | undefined) {
   const endpoint = value?.trim();
-  if (!endpoint) return null;
+  if (!endpoint || /[\s\u0000-\u001F\u007F]/.test(endpoint)) return null;
 
   try {
     const url = new URL(endpoint);
