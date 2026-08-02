@@ -65,7 +65,12 @@ function decoded(value: string) {
 
 const minimumSecretLength = 8;
 
-function addSecretVariants(values: Set<string>, value: string) {
+function addSecretVariants(
+  values: Set<string>,
+  value: string,
+  minimumLength = minimumSecretLength
+) {
+  if (!value) return;
   const variants = [
     value,
     decoded(value),
@@ -74,7 +79,7 @@ function addSecretVariants(values: Set<string>, value: string) {
   ];
 
   for (const variant of variants) {
-    if (variant.length >= minimumSecretLength) values.add(variant);
+    if (variant.length >= minimumLength) values.add(variant);
   }
 }
 
@@ -96,12 +101,12 @@ function endpointSecretValues(rpcUrls: readonly string[]) {
   for (const rpcUrl of rpcUrls) {
     addSecretVariants(values, rpcUrl);
     for (const credential of rawAuthorityCredentials(rpcUrl)) {
-      addSecretVariants(values, credential);
+      addSecretVariants(values, credential, 1);
     }
     try {
       const url = new URL(rpcUrl);
       for (const credential of [url.username, url.password]) {
-        if (credential) addSecretVariants(values, credential);
+        if (credential) addSecretVariants(values, credential, 1);
       }
       for (const parameter of url.search.slice(1).split("&")) {
         const separator = parameter.indexOf("=");
