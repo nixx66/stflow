@@ -15,7 +15,7 @@ type RpcServer = {
   readonly close: () => Promise<void>;
 };
 
-function startRpcServer(reply: RpcReply): Promise<RpcServer> {
+function startRpcServer(reply: RpcReply, token: string): Promise<RpcServer> {
   let requestCount = 0;
   const server = createServer(async (request, response) => {
     requestCount += 1;
@@ -50,7 +50,7 @@ function startRpcServer(reply: RpcReply): Promise<RpcServer> {
         return;
       }
       resolve({
-        url: `http://127.0.0.1:${address.port}`,
+        url: `http://127.0.0.1:${address.port}/v2/${token}`,
         requests: () => requestCount,
         close: () => closeServer(server)
       });
@@ -68,18 +68,23 @@ function runClient(rpcUrls: readonly string[]) {
   const script = `
     const { createArcServerClient } = await import('./lib/server/arcRpc.ts');
     const urls = JSON.parse(process.env.ARC_RPC_TEST_URLS);
+    const serializeError = (value, seen = new WeakSet(), depth = 0) => {
+      if (value === null || typeof value !== 'object') return value;
+      if (depth > 8) return '[truncated]';
+      if (seen.has(value)) return '[circular]';
+      seen.add(value);
+      return Object.fromEntries(
+        Object.getOwnPropertyNames(value).map((key) => [
+          key,
+          serializeError(value[key], seen, depth + 1)
+        ])
+      );
+    };
     try {
       const blockNumber = await createArcServerClient(urls).getBlockNumber();
       process.stdout.write(JSON.stringify({ blockNumber: blockNumber.toString() }));
     } catch (error) {
-      const rpcError = error && typeof error === 'object' ? error : {};
-      process.stdout.write(JSON.stringify({
-        error: {
-          code: typeof rpcError.code === 'number' ? rpcError.code : null,
-          details: typeof rpcError.details === 'string' ? rpcError.details : '',
-          shortMessage: typeof rpcError.shortMessage === 'string' ? rpcError.shortMessage : ''
-        }
-      }));
+      process.stdout.write(JSON.stringify({ error: serializeError(error) }));
     }
   `;
 
@@ -115,8 +120,13 @@ function runClient(rpcUrls: readonly string[]) {
 }
 
 test("fails over from a transient Arc RPC HTTP failure to the next configured endpoint", async () => {
-  const primary = await startRpcServer({ status: 503, blockNumber: "0x0" });
-  const fallback = await startRpcServer({ blockNumber: "0x2a" });
+  const primaryToken = "primary_token_123456789";
+  const fallbackToken = "fallback_token_987654321";
+  const primary = await startRpcServer(
+    { status: 503, blockNumber: "0x0" },
+    primaryToken
+  );
+  const fallback = await startRpcServer({ blockNumber: "0x2a" }, fallbackToken);
 
   try {
     const result = await runClient([primary.url, fallback.url]);
@@ -131,26 +141,51 @@ test("fails over from a transient Arc RPC HTTP failure to the next configured en
   }
 });
 
-test("surfaces a contract execution error without sending it to the fallback endpoint", async () => {
+test("surfaces a contract execution error without sending it to the fallback endpoint or leaking URLs", async () => {
+  const primaryToken = "primary_contract_token_123456789";
+  const fallbackToken = "fallback_contract_token_987654321";
   const primary = await startRpcServer({
     error: { code: 3, message: "execution reverted: Invoice expired" }
-  });
-  const fallback = await startRpcServer({ blockNumber: "0x2a" });
+  }, primaryToken);
+  const fallback = await startRpcServer({ blockNumber: "0x2a" }, fallbackToken);
 
   try {
     const result = await runClient([primary.url, fallback.url]);
     assert.equal(result.status, 0);
-    assert.deepEqual(JSON.parse(result.output), {
-      error: {
-        code: 3,
-        details: "execution reverted: Invoice expired",
-        shortMessage: "RPC Request failed."
-      }
-    });
+    const payload = JSON.parse(result.output) as { error: Record<string, unknown> };
+    assert.equal(payload.error.code, 3);
+    assert.equal(payload.error.details, "execution reverted: Invoice expired");
     assert.equal(primary.requests(), 1);
     assert.equal(fallback.requests(), 0);
     assert.doesNotMatch(result.output, new RegExp(primary.url, "i"));
     assert.doesNotMatch(result.output, new RegExp(fallback.url, "i"));
+    assert.doesNotMatch(result.output, new RegExp(primaryToken, "i"));
+    assert.doesNotMatch(result.output, new RegExp(fallbackToken, "i"));
+  } finally {
+    await Promise.all([primary.close(), fallback.close()]);
+  }
+});
+
+test("surfaces JSON-RPC invalid-parameter errors without fallback or endpoint leaks", async () => {
+  const primaryToken = "primary_invalid_params_token_123456789";
+  const fallbackToken = "fallback_invalid_params_token_987654321";
+  const primary = await startRpcServer({
+    error: { code: -32602, message: "invalid parameters" }
+  }, primaryToken);
+  const fallback = await startRpcServer({ blockNumber: "0x2a" }, fallbackToken);
+
+  try {
+    const result = await runClient([primary.url, fallback.url]);
+    assert.equal(result.status, 0);
+    const payload = JSON.parse(result.output) as { error: Record<string, unknown> };
+    assert.equal(payload.error.code, -32602);
+    assert.equal(payload.error.details, "invalid parameters");
+    assert.equal(primary.requests(), 1);
+    assert.equal(fallback.requests(), 0);
+    assert.doesNotMatch(result.output, new RegExp(primary.url, "i"));
+    assert.doesNotMatch(result.output, new RegExp(fallback.url, "i"));
+    assert.doesNotMatch(result.output, new RegExp(primaryToken, "i"));
+    assert.doesNotMatch(result.output, new RegExp(fallbackToken, "i"));
   } finally {
     await Promise.all([primary.close(), fallback.close()]);
   }
