@@ -6,7 +6,6 @@ import {
   FileText,
   LayoutDashboard,
   ReceiptText,
-  Settings,
   ShoppingCart,
   Sparkles,
   Users
@@ -23,8 +22,7 @@ const consoleNav = [
   { label: "Customers", href: "/console/customers", icon: Users },
   { label: "Orders", href: "/console/orders", icon: ShoppingCart },
   { label: "Analytics", href: "/console/analytics", icon: BarChart3 },
-  { label: "Export", href: "/console/export", icon: Download },
-  { label: "Settings", href: "/console/settings", icon: Settings }
+  { label: "Export", href: "/console/export", icon: Download }
 ];
 
 export function ConsoleShell({ children }: { children: ReactNode }) {

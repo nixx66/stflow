@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const routes = [
   ["app/console/customers/page.tsx", "Customer directory", "customerRows"],
@@ -28,4 +28,11 @@ test("all console navigation targets are backed by pages", () => {
   for (const path of ["customers", "orders", "analytics", "export"]) {
     assert.match(shell, new RegExp(`/console/${path}`));
   }
+});
+
+test("console does not expose the read-only settings page", () => {
+  const shell = readFileSync("components/console/ConsoleShell.tsx", "utf8");
+
+  assert.doesNotMatch(shell, /\/console\/settings/);
+  assert.equal(existsSync("app/console/settings/page.tsx"), false);
 });
