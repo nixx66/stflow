@@ -35,6 +35,7 @@ import {
   getPaymentPlan,
   invoicePaidEvent,
   isCurrentInvoiceLoad,
+  markInvoiceReceiptConfirmed,
   normalizeInvoiceId,
   reducePaymentState,
   resolvePaymentProof,
@@ -106,7 +107,9 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
   const [loadErrorInvoiceId, setLoadErrorInvoiceId] = useState<Hex>();
   const [loadingInvoiceId, setLoadingInvoiceId] = useState<Hex>();
   const [proof, setProof] = useState<PaymentProof>();
+  const [isSyncing, setIsSyncing] = useState(false);
   const activeRequest = useRef<Hex | undefined>(undefined);
+  const confirmedInvoice = useRef<ChainInvoice | undefined>(undefined);
   const loadGeneration = useRef(0);
   const invoiceKey = useRef<Hex | undefined>(undefined);
   try {
@@ -157,8 +160,17 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
       }
 
       if (!current()) return;
-      setInvoice(chainInvoice);
+      const cachedConfirmed = confirmedInvoice.current;
+      const preserveConfirmation =
+        chainInvoice.status === 0 &&
+        cachedConfirmed !== undefined &&
+        normalizeInvoiceId(cachedConfirmed.id) === id;
+      setInvoice(preserveConfirmation ? cachedConfirmed : chainInvoice);
       setLoadedInvoiceId(id);
+      let reconciliationFailed = preserveConfirmation;
+      if (chainInvoice.status === 1) {
+        confirmedInvoice.current = chainInvoice;
+      }
       try {
         const verified = await getVerifiedMetadata(id, chainInvoice.metadataHash);
         if (current()) {
@@ -167,6 +179,7 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
         }
       } catch (error) {
         if (current()) {
+          reconciliationFailed = true;
           setMetadata(undefined);
           setMetadataInvoiceId(id);
           setLoadError(message(error));
@@ -199,9 +212,14 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
               amount: chainInvoice.amount
             }
           );
-          if (current()) setProof({ invoiceId: id, ...result });
+          if (current()) {
+            if (result.status === "error") reconciliationFailed = true;
+            setProof({ invoiceId: id, ...result });
+          }
         } catch {
           if (current()) {
+            reconciliationFailed = true;
+            setIsSyncing(true);
             setProof({
               invoiceId: id,
               status: "error",
@@ -210,13 +228,23 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
           }
         }
       }
+      if (chainInvoice.status === 1 && current()) {
+        setIsSyncing(reconciliationFailed);
+      }
     } catch (error) {
       if (current()) {
-        setInvoice(undefined);
-        setMetadata(undefined);
+        const confirmed = confirmedInvoice.current;
+        if (confirmed && normalizeInvoiceId(confirmed.id) === id) {
+          setInvoice(confirmed);
+          setLoadedInvoiceId(id);
+          setIsSyncing(true);
+        } else {
+          setInvoice(undefined);
+          setMetadata(undefined);
+          setProof(undefined);
+        }
         setLoadError(message(error));
         setLoadErrorInvoiceId(id);
-        setProof(undefined);
       }
     } finally {
       if (current()) setIsLoading(false);
@@ -236,6 +264,8 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
     setMetadata(undefined);
     setMetadataInvoiceId(undefined);
     setProof(undefined);
+    setIsSyncing(false);
+    confirmedInvoice.current = undefined;
     setLoadError(undefined);
     setLoadErrorInvoiceId(undefined);
     void load();
@@ -429,28 +459,50 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
         amount: submitted.amount
       });
 
-      const confirmed = (await retryArcRead(() =>
-        readContract(config, {
-          address: INVOICE_REGISTRY_ADDRESS,
-          abi: invoiceRegistryAbi,
-          functionName: "getInvoice",
-          args: [id],
-          chainId: ARC_TESTNET.chainId
-        })
-      )) as ChainInvoice;
-      validateConfirmedPayment(confirmed, submitted);
+      const receiptConfirmed = markInvoiceReceiptConfirmed(submitted);
       const stale = invoiceKey.current !== id;
       if (!stale) {
-        setInvoice(confirmed);
+        confirmedInvoice.current = receiptConfirmed;
+        setInvoice(receiptConfirmed);
         setLoadedInvoiceId(id);
         setProof({
           invoiceId: id,
           status: "verified",
           txHash: paymentTxHash
         });
+        setLoadError(undefined);
+        setLoadErrorInvoiceId(undefined);
+        setIsSyncing(true);
       }
       dispatch({ type: "payment_confirmed", requestId: paymentRequest });
-      return { invoice: confirmed, txHash: paymentTxHash, stale };
+
+      try {
+        const confirmed = (await retryArcRead(() =>
+          readContract(config, {
+            address: INVOICE_REGISTRY_ADDRESS,
+            abi: invoiceRegistryAbi,
+            functionName: "getInvoice",
+            args: [id],
+            chainId: ARC_TESTNET.chainId
+          })
+        )) as ChainInvoice;
+        validateConfirmedPayment(confirmed, submitted);
+        if (!stale && invoiceKey.current === id) {
+          confirmedInvoice.current = confirmed;
+          setInvoice(confirmed);
+          setLoadedInvoiceId(id);
+          setIsSyncing(false);
+        }
+        return { invoice: confirmed, txHash: paymentTxHash, stale, reconciled: true };
+      } catch {
+        if (!stale && invoiceKey.current === id) setIsSyncing(true);
+      }
+      return {
+        invoice: receiptConfirmed,
+        txHash: paymentTxHash,
+        stale,
+        reconciled: false
+      };
     } catch (error) {
       dispatch({ type: "failed", requestId: paymentRequest, error: message(error) });
       return null;
@@ -489,9 +541,12 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
     selectInvoiceScope(currentId, { invoiceId: loadingInvoiceId });
 
   const refresh = useCallback(async () => {
-    if (currentId) dispatch({ type: "reset", invoiceId: currentId });
+    if (currentId && state.stage !== "success") {
+      dispatch({ type: "reset", invoiceId: currentId });
+    }
+    if (state.stage === "success") setIsSyncing(true);
     await load();
-  }, [currentId, load]);
+  }, [currentId, load, state.stage]);
 
   return {
     pay,
@@ -500,8 +555,15 @@ export function usePayInvoice(invoiceId: string, receiptHash?: Hex) {
     invoice: scopedInvoice?.value,
     metadata: scopedMetadata?.value,
     isLoading:
-      "error" in route ? route.isLoading : loadingMatches ? isLoading : true,
+      "error" in route
+        ? route.isLoading
+        : scopedInvoice?.value?.status === 1
+          ? false
+          : loadingMatches
+            ? isLoading
+            : true,
     loadError: "error" in route ? route.error : scopedError?.value,
+    isSyncing,
     proof:
       "error" in route
         ? { status: "error" as const, error: route.error }

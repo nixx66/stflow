@@ -207,6 +207,7 @@ export function reducePaymentState(
   if (action.type === "reset") {
     return { stage: "idle", invoiceId: normalizeInvoiceId(action.invoiceId) };
   }
+  if (state.stage === "success") return state;
   if (action.type !== "started" && state.requestId !== action.requestId) {
     return state;
   }
@@ -242,6 +243,10 @@ export function reducePaymentState(
     case "failed":
       return { ...state, stage: "error", error: action.error };
   }
+}
+
+export function markInvoiceReceiptConfirmed(invoice: ChainInvoice): ChainInvoice {
+  return invoice.status === 1 ? invoice : { ...invoice, status: 1 };
 }
 
 type PaidEvent = {

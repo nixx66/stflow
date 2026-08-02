@@ -17,6 +17,7 @@ import {
   getPaymentPlan,
   invoicePaidEvent,
   isCurrentInvoiceLoad,
+  markInvoiceReceiptConfirmed,
   normalizeInvoiceId,
   reducePaymentState,
   resolvePaymentProof,
@@ -224,6 +225,34 @@ test("requires a final Paid chain re-read with a non-zero paidAt", () => {
         invoice
       ),
     /changed/
+  );
+});
+
+test("projects a receipt-confirmed invoice without inventing a paid timestamp", () => {
+  assert.deepEqual(markInvoiceReceiptConfirmed(invoice), {
+    ...invoice,
+    status: 1
+  });
+});
+
+test("does not downgrade a receipt-confirmed payment after a later sync failure", () => {
+  const confirmed = reducePaymentState(
+    {
+      stage: "payment-confirming",
+      invoiceId: ID,
+      requestId: REQUEST_A,
+      paymentTxHash: PAYMENT_HASH
+    },
+    { type: "payment_confirmed", requestId: REQUEST_A }
+  );
+
+  assert.deepEqual(
+    reducePaymentState(confirmed, {
+      type: "failed",
+      requestId: REQUEST_A,
+      error: "Arc Testnet is temporarily busy."
+    }),
+    confirmed
   );
 });
 

@@ -45,6 +45,7 @@ export function PaymentPanel({ invoiceId }: { invoiceId: string }) {
     metadata,
     isLoading,
     loadError,
+    isSyncing,
     paymentTxHash,
     payerConnected,
     connectedAddress
@@ -86,14 +87,20 @@ export function PaymentPanel({ invoiceId }: { invoiceId: string }) {
     );
   }
 
-  const isPaid = invoice.status === 1;
+  const paymentConfirmed = invoice.status === 1 || state.stage === "success";
+  const isPaid = paymentConfirmed;
   const isExpired = invoice.status === 0 && BigInt(now) >= invoice.dueAt;
   const isCancelled = invoice.status === 2;
   const isPaying = !["idle", "success", "error"].includes(state.stage);
   const correctPayer =
     connectedAddress && isAddressEqual(getAddress(connectedAddress), invoice.payer);
   const canPay =
-    payerConnected && correctPayer && invoice.status === 0 && !isExpired && !isPaying;
+    payerConnected &&
+    correctPayer &&
+    !paymentConfirmed &&
+    invoice.status === 0 &&
+    !isExpired &&
+    !isPaying;
   const status = isPaid
     ? "paid"
     : isCancelled
@@ -118,7 +125,7 @@ export function PaymentPanel({ invoiceId }: { invoiceId: string }) {
 
   const handlePay = async () => {
     const result = await pay();
-    if (result && "invoice" in result && !result.stale) {
+    if (result && "invoice" in result && !result.stale && result.reconciled) {
       window.setTimeout(
         () => router.push(`/receipt/${invoice.id}?tx=${result.txHash}`),
         700
@@ -195,7 +202,7 @@ export function PaymentPanel({ invoiceId }: { invoiceId: string }) {
 
         <div className="mt-6 rounded-lg border border-slate-200 bg-white p-4">
           <div className="flex items-center gap-3">
-            {isPaid || state.stage === "success" ? (
+            {paymentConfirmed ? (
               <CheckCircle2 className="h-5 w-5 text-emerald-600" />
             ) : (
               <Loader2
@@ -203,10 +210,21 @@ export function PaymentPanel({ invoiceId }: { invoiceId: string }) {
               />
             )}
             <p className="text-sm font-semibold text-ink">
-              {isPaid ? "Payment confirmed on Arc Testnet" : stageMessage(state.stage)}
+              {paymentConfirmed
+                ? "Payment confirmed on Arc Testnet"
+                : stageMessage(state.stage)}
             </p>
           </div>
-          {state.error || loadError ? (
+          {paymentConfirmed && isSyncing ? (
+            <div className="mt-2">
+              <p className="text-sm text-muted">链上数据正在同步</p>
+              <button
+                className="mt-2 text-sm font-semibold text-arc-700 underline"
+                onClick={retry}
+                type="button"
+              >Retry</button>
+            </div>
+          ) : !paymentConfirmed && (state.error || loadError) ? (
             <div className="mt-2">
               <p className="text-sm text-red-600">{state.error ?? loadError}</p>
               <button
