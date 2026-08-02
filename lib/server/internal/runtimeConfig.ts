@@ -127,7 +127,7 @@ function normalizeArcRpcUrl(value: string | undefined) {
     const bareHostname = hostname.replace(/^\[|\]$/g, "");
     const authority = endpoint
       .slice(endpoint.indexOf("://") + 3)
-      .split(/[/?#]/, 1)[0]
+      .split(/[\\/?#]/, 1)[0]
       .replace(/^.*@/, "");
     const hasExplicitPort = authority.startsWith("[")
       ? /^\[[^\]]+\]:\d+$/.test(authority)

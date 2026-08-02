@@ -184,6 +184,7 @@ test("rejects unsafe private Arc RPC endpoints without exposing them", () => {
     "https://arc-testnet.g.alchemy.com/v2/test-key?secret=value",
     "https://arc-testnet.g.alchemy.com/v2/test-key#secret",
     "https://arc-testnet.g.alchemy.com:443/v2/test-key",
+    "https://arc-testnet.g.alchemy.com:443\\v2/test-key",
     "https://localhost/v2/test-key",
     "https://127.0.0.1/v2/test-key",
     "https://arc-testnet.g.alchemy.com/v3/test-key",
