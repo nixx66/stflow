@@ -8,6 +8,8 @@ const requiredVariables = [
   "NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS"
 ] as const;
 const configVariables = [...requiredVariables, "ARC_RPC_URL"] as const;
+const arcRpcUrlPattern =
+  /^https:\/\/arc-testnet\.g\.alchemy\.com\/v2\/[A-Za-z0-9_-]+$/;
 
 type ConfigVariable = (typeof configVariables)[number];
 type Environment = Record<string, string | undefined>;
@@ -119,25 +121,12 @@ function normalizeAddress(value: string | undefined) {
 
 function normalizeArcRpcUrl(value: string | undefined) {
   const endpoint = value?.trim();
-  if (!endpoint || /[\s\u0000-\u001F\u007F]/.test(endpoint)) return null;
+  if (!endpoint || !arcRpcUrlPattern.test(endpoint)) return null;
 
   try {
     const url = new URL(endpoint);
     const hostname = url.hostname.toLowerCase();
-    const bareHostname = hostname.replace(/^\[|\]$/g, "");
-    const authority = endpoint
-      .slice(endpoint.indexOf("://") + 3)
-      .split(/[\\/?#]/, 1)[0]
-      .replace(/^.*@/, "");
-    const hasExplicitPort = authority.startsWith("[")
-      ? /^\[[^\]]+\]:\d+$/.test(authority)
-      : /:\d+$/.test(authority);
-    const unsafeHost =
-      isIP(bareHostname) !== 0 ||
-      hostname === "localhost" ||
-      hostname.endsWith(".localhost") ||
-      hostname.endsWith(".local") ||
-      hostname.endsWith(".internal");
+    const canonicalEndpoint = url.origin + url.pathname;
 
     if (
       url.protocol !== "https:" ||
@@ -146,15 +135,13 @@ function normalizeArcRpcUrl(value: string | undefined) {
       url.search ||
       url.hash ||
       url.port ||
-      hasExplicitPort ||
-      unsafeHost ||
       hostname !== "arc-testnet.g.alchemy.com" ||
-      !/^\/v2\/[^/]+$/.test(url.pathname)
+      canonicalEndpoint !== endpoint
     ) {
       return null;
     }
 
-    return url.origin + url.pathname;
+    return canonicalEndpoint;
   } catch {
     return null;
   }
