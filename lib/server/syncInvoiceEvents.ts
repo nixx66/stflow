@@ -1,8 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
-  createPublicClient,
   getAddress,
-  http,
   type Address,
   type Hex
 } from "viem";
@@ -395,22 +393,18 @@ export function createSyncDependencies(
   clientDb: unknown
 ): SyncDependencies {
   const db = clientDb as SupabaseLike;
-  const client = createPublicClient({
-    chain: {
-      id: ARC_TESTNET.chainId,
-      name: ARC_TESTNET.name,
-      nativeCurrency: ARC_TESTNET.nativeCurrency,
-      rpcUrls: { default: { http: [ARC_TESTNET.rpcUrl] } }
-    },
-    transport: http(ARC_TESTNET.rpcUrl, { timeout: 15_000, retryCount: 2 })
-  });
+  let client: Promise<ReturnType<typeof import("./arcRpc.ts").createArcServerClient>> | undefined;
+  const getClient = () =>
+    (client ??= import("./arcRpc.ts").then(({ createArcServerClient }) =>
+      createArcServerClient()
+    ));
   const normalizedRegistry = registry.toLowerCase();
 
   return {
     chain: {
-      getBlockNumber: () => client.getBlockNumber(),
+      getBlockNumber: async () => (await getClient()).getBlockNumber(),
       async getBlock({ blockNumber }) {
-        const block = await client.getBlock({ blockNumber });
+        const block = await (await getClient()).getBlock({ blockNumber });
         if (!block.hash) throw new Error("Arc returned an unsealed block.");
         return {
           number: block.number,
@@ -418,8 +412,8 @@ export function createSyncDependencies(
           timestamp: block.timestamp
         };
       },
-      getLogs: ({ fromBlock, toBlock }) =>
-        client.getLogs({
+      getLogs: async ({ fromBlock, toBlock }) =>
+        (await getClient()).getLogs({
           address: registry,
           events: invoiceEvents,
           fromBlock,
@@ -496,7 +490,7 @@ export function createSyncDependencies(
         const batch = blockNumbers.slice(offset, offset + 8);
         const fetched = await Promise.all(
           batch.map(async (blockNumber) => {
-            const block = await client.getBlock({ blockNumber });
+            const block = await (await getClient()).getBlock({ blockNumber });
             if (!block.hash) throw new Error("Arc returned an unsealed block.");
             return [
               blockNumber,

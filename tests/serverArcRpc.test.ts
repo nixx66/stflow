@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { spawn } from "node:child_process";
 
@@ -14,6 +15,29 @@ type RpcServer = {
   readonly requests: () => number;
   readonly close: () => Promise<void>;
 };
+
+test("routes every server-side Arc read through the shared failover client", async () => {
+  const serverReadFiles = [
+    "lib/server/readWalletInvoices.ts",
+    "lib/server/syncInvoiceEvents.ts",
+    "app/api/v1/invoices/metadata/route.ts"
+  ];
+
+  for (const file of serverReadFiles) {
+    const source = await readFile(file, "utf8");
+    assert.match(
+      source,
+      /(?:import\s*\{[^}]*\bcreateArcServerClient\b[^}]*\}\s*from|import\(\s*["'][^"']*arcRpc[^"']*["']\s*\))/
+    );
+    assert.match(source, /\bcreateArcServerClient\s*\(/);
+    assert.doesNotMatch(source, /http\(\s*ARC_TESTNET\.rpcUrl\b/);
+    assert.doesNotMatch(source, /http\(\s*config\.rpcUrl\b/);
+    assert.doesNotMatch(
+      source,
+      /http\(\s*arcTestnet\.rpcUrls\.default\.http\[0\]\s*\)/
+    );
+  }
+});
 
 function startRpcServer(reply: RpcReply, token: string): Promise<RpcServer> {
   let requestCount = 0;

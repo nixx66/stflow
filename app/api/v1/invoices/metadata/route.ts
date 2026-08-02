@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { createPublicClient, http, isAddress } from "viem";
-import { arcTestnet } from "@/lib/chains";
+import { isAddress } from "viem";
+import { createArcServerClient } from "@/lib/server/arcRpc";
 import { getInvoiceMetadataRepository } from "@/lib/server/invoiceMetadataRepository";
 import {
   MetadataConflictError,
@@ -38,10 +38,7 @@ function walletFromChallenge(challenge: unknown) {
 export async function POST(request: Request) {
   try {
     const config = getServerRuntimeConfig();
-    const client = createPublicClient({
-      chain: arcTestnet,
-      transport: http(config.rpcUrl)
-    });
+    const client = createArcServerClient();
     const body = await readBoundedJson(request, MAX_BODY_BYTES) as
       Parameters<typeof persistSignedInvoiceMetadata>[0];
     await enforceMetadataRateLimit(

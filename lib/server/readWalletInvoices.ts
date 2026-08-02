@@ -1,14 +1,13 @@
 import "server-only";
 
-import { createPublicClient, http, type Address, type Hex } from "viem";
-import { arcTestnet } from "../chains.ts";
+import { type Address, type Hex } from "viem";
+import { createArcServerClient } from "./arcRpc.ts";
 import { walletInvoiceIds } from "../onchainInvoices.ts";
 import type { ChainInvoice } from "../paymentTransaction.ts";
 
-const client = createPublicClient({ chain: arcTestnet, transport: http(arcTestnet.rpcUrls.default.http[0]) });
-
 export async function readWalletChainInvoices(wallet: Address) {
   const { INVOICE_REGISTRY_ADDRESS, invoiceRegistryAbi } = await import("../contracts/invoiceRegistry.ts");
+  const client = createArcServerClient();
   const ids = await walletInvoiceIds(wallet, {
     count: (address) => client.readContract({
       address: INVOICE_REGISTRY_ADDRESS,
