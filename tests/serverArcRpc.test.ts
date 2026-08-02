@@ -1,0 +1,157 @@
+import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
+import test from "node:test";
+import { spawn } from "node:child_process";
+
+type RpcReply = {
+  readonly status?: number;
+  readonly error?: { readonly code: number; readonly message: string };
+  readonly blockNumber?: string;
+};
+
+type RpcServer = {
+  readonly url: string;
+  readonly requests: () => number;
+  readonly close: () => Promise<void>;
+};
+
+function startRpcServer(reply: RpcReply): Promise<RpcServer> {
+  let requestCount = 0;
+  const server = createServer(async (request, response) => {
+    requestCount += 1;
+    let body = "";
+    for await (const chunk of request) {
+      body += chunk;
+    }
+    const rpcRequest = JSON.parse(body) as { readonly id: number; readonly method: string };
+    const result =
+      rpcRequest.method === "eth_chainId"
+        ? "0x4cef52"
+        : rpcRequest.method === "eth_blockNumber"
+          ? reply.blockNumber
+          : undefined;
+
+    response.writeHead(reply.status ?? 200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: rpcRequest.id,
+        ...(reply.error ? { error: reply.error } : { result })
+      })
+    );
+  });
+
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Local RPC test server did not bind."));
+        return;
+      }
+      resolve({
+        url: `http://127.0.0.1:${address.port}`,
+        requests: () => requestCount,
+        close: () => closeServer(server)
+      });
+    });
+  });
+}
+
+function closeServer(server: Server) {
+  return new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+function runClient(rpcUrls: readonly string[]) {
+  const script = `
+    const { createArcServerClient } = await import('./lib/server/arcRpc.ts');
+    const urls = JSON.parse(process.env.ARC_RPC_TEST_URLS);
+    try {
+      const blockNumber = await createArcServerClient(urls).getBlockNumber();
+      process.stdout.write(JSON.stringify({ blockNumber: blockNumber.toString() }));
+    } catch (error) {
+      const rpcError = error && typeof error === 'object' ? error : {};
+      process.stdout.write(JSON.stringify({
+        error: {
+          code: typeof rpcError.code === 'number' ? rpcError.code : null,
+          details: typeof rpcError.details === 'string' ? rpcError.details : '',
+          shortMessage: typeof rpcError.shortMessage === 'string' ? rpcError.shortMessage : ''
+        }
+      }));
+    }
+  `;
+
+  return new Promise<{ readonly status: number | null; readonly output: string }>(
+    (resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        ["--conditions=react-server", "--input-type=module", "--eval", script],
+        {
+          cwd: process.cwd(),
+          env: { ...process.env, ARC_RPC_TEST_URLS: JSON.stringify(rpcUrls) },
+          stdio: ["ignore", "pipe", "pipe"]
+        }
+      );
+      let output = "";
+      let errors = "";
+      child.stdout.on("data", (chunk) => {
+        output += chunk;
+      });
+      child.stderr.on("data", (chunk) => {
+        errors += chunk;
+      });
+      child.once("error", reject);
+      child.once("close", (status) => {
+        if (status !== 0) {
+          reject(new Error(`Arc RPC test client exited unexpectedly: ${errors}`));
+          return;
+        }
+        resolve({ status, output });
+      });
+    }
+  );
+}
+
+test("fails over from a transient Arc RPC HTTP failure to the next configured endpoint", async () => {
+  const primary = await startRpcServer({ status: 503, blockNumber: "0x0" });
+  const fallback = await startRpcServer({ blockNumber: "0x2a" });
+
+  try {
+    const result = await runClient([primary.url, fallback.url]);
+    assert.equal(result.status, 0);
+    assert.deepEqual(JSON.parse(result.output), { blockNumber: "42" });
+    assert.ok(primary.requests() >= 1 && primary.requests() <= 2);
+    assert.equal(fallback.requests(), 1);
+    assert.doesNotMatch(result.output, new RegExp(primary.url, "i"));
+    assert.doesNotMatch(result.output, new RegExp(fallback.url, "i"));
+  } finally {
+    await Promise.all([primary.close(), fallback.close()]);
+  }
+});
+
+test("surfaces a contract execution error without sending it to the fallback endpoint", async () => {
+  const primary = await startRpcServer({
+    error: { code: 3, message: "execution reverted: Invoice expired" }
+  });
+  const fallback = await startRpcServer({ blockNumber: "0x2a" });
+
+  try {
+    const result = await runClient([primary.url, fallback.url]);
+    assert.equal(result.status, 0);
+    assert.deepEqual(JSON.parse(result.output), {
+      error: {
+        code: 3,
+        details: "execution reverted: Invoice expired",
+        shortMessage: "RPC Request failed."
+      }
+    });
+    assert.equal(primary.requests(), 1);
+    assert.equal(fallback.requests(), 0);
+    assert.doesNotMatch(result.output, new RegExp(primary.url, "i"));
+    assert.doesNotMatch(result.output, new RegExp(fallback.url, "i"));
+  } finally {
+    await Promise.all([primary.close(), fallback.close()]);
+  }
+});
