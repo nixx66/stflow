@@ -63,28 +63,54 @@ function decoded(value: string) {
   }
 }
 
+const minimumSecretLength = 8;
+
+function addSecretVariants(values: Set<string>, value: string) {
+  const variants = [
+    value,
+    decoded(value),
+    encodeURIComponent(value),
+    encodeURIComponent(decoded(value))
+  ];
+
+  for (const variant of variants) {
+    if (variant.length >= minimumSecretLength) values.add(variant);
+  }
+}
+
+function rawAuthorityCredentials(rpcUrl: string) {
+  const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(rpcUrl)?.[1];
+  const at = authority?.lastIndexOf("@") ?? -1;
+  if (!authority || at < 0) return [];
+
+  const userInfo = authority.slice(0, at);
+  const separator = userInfo.indexOf(":");
+  return separator < 0
+    ? [userInfo]
+    : [userInfo.slice(0, separator), userInfo.slice(separator + 1)];
+}
+
 function endpointSecretValues(rpcUrls: readonly string[]) {
   const values = new Set<string>();
 
   for (const rpcUrl of rpcUrls) {
-    values.add(rpcUrl);
+    addSecretVariants(values, rpcUrl);
+    for (const credential of rawAuthorityCredentials(rpcUrl)) {
+      addSecretVariants(values, credential);
+    }
     try {
       const url = new URL(rpcUrl);
       for (const credential of [url.username, url.password]) {
-        if (credential) values.add(decoded(credential));
+        if (credential) addSecretVariants(values, credential);
       }
       for (const parameter of url.search.slice(1).split("&")) {
         const separator = parameter.indexOf("=");
         const value = separator >= 0 ? parameter.slice(separator + 1) : "";
-        if (value) {
-          values.add(value);
-          values.add(decoded(value));
-        }
+        if (value) addSecretVariants(values, value);
       }
       const pathToken = url.pathname.split("/").filter(Boolean).at(-1);
       if (pathToken && pathToken.length >= 8) {
-        values.add(pathToken);
-        values.add(decoded(pathToken));
+        addSecretVariants(values, pathToken);
       }
     } catch {
       // Viem will report an invalid explicit URL without exposing it from this boundary.

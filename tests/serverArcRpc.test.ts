@@ -222,3 +222,41 @@ test("redacts query and path endpoint keys echoed by a JSON-RPC error", async ()
     await Promise.all([primary.close(), fallback.close()]);
   }
 });
+
+test("redacts percent-encoded and decoded Basic-auth credentials echoed by a JSON-RPC error", async () => {
+  const username = "primary_user+token_123456789";
+  const password = "primary_password/token=987654321";
+  const rawUsername = encodeURIComponent(username);
+  const rawPassword = encodeURIComponent(password);
+  const pathToken = "primary_credentials_path_123456789";
+  const fallbackToken = "fallback_credentials_token_123456789";
+  const primary = await startRpcServer({
+    error: {
+      code: -32602,
+      message: `invalid credentials: ${rawUsername}; ${rawPassword}; ${username}; ${password}`
+    }
+  }, pathToken);
+  const fallback = await startRpcServer({ blockNumber: "0x2a" }, fallbackToken);
+  const primaryUrl = primary.url.replace(
+    "http://",
+    `http://${rawUsername}:${rawPassword}@`
+  );
+
+  try {
+    const result = await runClient([primaryUrl, fallback.url]);
+    assert.equal(result.status, 0);
+    const payload = JSON.parse(result.output) as { error: Record<string, unknown> };
+    assert.equal(payload.error.code, -32602);
+    assert.equal(
+      payload.error.details,
+      "invalid credentials: [redacted endpoint]; [redacted endpoint]; [redacted endpoint]; [redacted endpoint]"
+    );
+    assert.equal(primary.requests(), 1);
+    assert.equal(fallback.requests(), 0);
+    for (const credential of [rawUsername, rawPassword, username, password]) {
+      assert.doesNotMatch(result.output, new RegExp(credential, "i"));
+    }
+  } finally {
+    await Promise.all([primary.close(), fallback.close()]);
+  }
+});
