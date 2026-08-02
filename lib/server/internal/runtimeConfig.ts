@@ -7,8 +7,9 @@ const requiredVariables = [
   "SUPABASE_SERVICE_ROLE_KEY",
   "NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS"
 ] as const;
+const configVariables = [...requiredVariables, "ARC_RPC_URL"] as const;
 
-type RequiredVariable = (typeof requiredVariables)[number];
+type ConfigVariable = (typeof configVariables)[number];
 type Environment = Record<string, string | undefined>;
 
 export type ServerRuntimeConfig = Readonly<{
@@ -16,15 +17,16 @@ export type ServerRuntimeConfig = Readonly<{
   supabaseServiceRoleKey: string;
   invoiceRegistryAddress: Address;
   chainId: typeof ARC_TESTNET.chainId;
-  rpcUrl: typeof ARC_TESTNET.rpcUrl;
+  rpcUrls: readonly [string, ...string[]];
+  rpcUrl: string;
   explorerUrl: typeof ARC_TESTNET.explorerUrl;
   usdcAddress: typeof ARC_CONTRACTS.usdc;
 }>;
 
 export class RuntimeConfigError extends Error {
-  readonly variables: readonly RequiredVariable[];
+  readonly variables: readonly ConfigVariable[];
 
-  constructor(variables: RequiredVariable[]) {
+  constructor(variables: ConfigVariable[]) {
     super(`Invalid server configuration: ${variables.join(", ")}`);
     this.name = "RuntimeConfigError";
     this.variables = Object.freeze([...variables]);
@@ -115,6 +117,49 @@ function normalizeAddress(value: string | undefined) {
   }
 }
 
+function normalizeArcRpcUrl(value: string | undefined) {
+  const endpoint = value?.trim();
+  if (!endpoint) return null;
+
+  try {
+    const url = new URL(endpoint);
+    const hostname = url.hostname.toLowerCase();
+    const bareHostname = hostname.replace(/^\[|\]$/g, "");
+    const authority = endpoint
+      .slice(endpoint.indexOf("://") + 3)
+      .split(/[/?#]/, 1)[0]
+      .replace(/^.*@/, "");
+    const hasExplicitPort = authority.startsWith("[")
+      ? /^\[[^\]]+\]:\d+$/.test(authority)
+      : /:\d+$/.test(authority);
+    const unsafeHost =
+      isIP(bareHostname) !== 0 ||
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname.endsWith(".local") ||
+      hostname.endsWith(".internal");
+
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      url.port ||
+      hasExplicitPort ||
+      unsafeHost ||
+      hostname !== "arc-testnet.g.alchemy.com" ||
+      !/^\/v2\/[^/]+$/.test(url.pathname)
+    ) {
+      return null;
+    }
+
+    return url.origin + url.pathname;
+  } catch {
+    return null;
+  }
+}
+
 export function parseServerRuntimeConfig(env: Environment): ServerRuntimeConfig {
   const supabaseUrl = normalizeSupabaseUrl(env.SUPABASE_URL);
   const supabaseServiceRoleKey = normalizeServiceRoleKey(
@@ -123,12 +168,16 @@ export function parseServerRuntimeConfig(env: Environment): ServerRuntimeConfig 
   const invoiceRegistryAddress = normalizeAddress(
     env.NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS
   );
-  const invalid: RequiredVariable[] = [];
+  const privateRpcUrl = normalizeArcRpcUrl(env.ARC_RPC_URL);
+  const invalid: ConfigVariable[] = [];
 
   if (!supabaseUrl) invalid.push("SUPABASE_URL");
   if (!supabaseServiceRoleKey) invalid.push("SUPABASE_SERVICE_ROLE_KEY");
   if (!invoiceRegistryAddress) {
     invalid.push("NEXT_PUBLIC_INVOICE_REGISTRY_ADDRESS");
+  }
+  if (env.ARC_RPC_URL?.trim() && !privateRpcUrl) {
+    invalid.push("ARC_RPC_URL");
   }
   if (
     invalid.length ||
@@ -139,12 +188,20 @@ export function parseServerRuntimeConfig(env: Environment): ServerRuntimeConfig 
     throw new RuntimeConfigError(invalid);
   }
 
+  const rpcUrls = privateRpcUrl
+    ? (Object.freeze([privateRpcUrl, ARC_TESTNET.rpcUrl]) as readonly [
+        string,
+        ...string[]
+      ])
+    : (Object.freeze([ARC_TESTNET.rpcUrl]) as readonly [string, ...string[]]);
+
   return Object.freeze({
     supabaseUrl,
     supabaseServiceRoleKey,
     invoiceRegistryAddress,
     chainId: ARC_TESTNET.chainId,
-    rpcUrl: ARC_TESTNET.rpcUrl,
+    rpcUrls,
+    rpcUrl: rpcUrls[0],
     explorerUrl: ARC_TESTNET.explorerUrl,
     usdcAddress: ARC_CONTRACTS.usdc
   });

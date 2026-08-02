@@ -156,11 +156,56 @@ test("normalizes and freezes server runtime configuration", () => {
   assert.equal(Object.isFrozen(config), true);
 });
 
+test("uses a normalized private Arc RPC endpoint before the public fallback", () => {
+  const config = getServerRuntimeConfig({
+    ...validEnv,
+    ARC_RPC_URL: " https://arc-testnet.g.alchemy.com/v2/test-key "
+  });
+
+  assert.deepEqual(config.rpcUrls, [
+    "https://arc-testnet.g.alchemy.com/v2/test-key",
+    ARC_TESTNET.rpcUrl
+  ]);
+  assert.equal(config.rpcUrl, "https://arc-testnet.g.alchemy.com/v2/test-key");
+  assert.equal(Object.isFrozen(config.rpcUrls), true);
+});
+
+test("uses the public Arc RPC endpoint when no private endpoint is configured", () => {
+  const config = getServerRuntimeConfig(validEnv);
+
+  assert.deepEqual(config.rpcUrls, [ARC_TESTNET.rpcUrl]);
+  assert.equal(config.rpcUrl, ARC_TESTNET.rpcUrl);
+});
+
+test("rejects unsafe private Arc RPC endpoints without exposing them", () => {
+  for (const url of [
+    "http://arc-testnet.g.alchemy.com/v2/test-key",
+    "https://user:password@arc-testnet.g.alchemy.com/v2/test-key",
+    "https://arc-testnet.g.alchemy.com/v2/test-key?secret=value",
+    "https://arc-testnet.g.alchemy.com/v2/test-key#secret",
+    "https://arc-testnet.g.alchemy.com:443/v2/test-key",
+    "https://localhost/v2/test-key",
+    "https://127.0.0.1/v2/test-key",
+    "https://arc-testnet.g.alchemy.com/v3/test-key",
+    "https://rpc.testnet.arc.network/v2/test-key"
+  ]) {
+    assert.throws(
+      () => getServerRuntimeConfig({ ...validEnv, ARC_RPC_URL: url }),
+      (error: unknown) => {
+        assert.ok(error instanceof RuntimeConfigError);
+        assert.ok(error.variables.includes("ARC_RPC_URL"));
+        assert.equal(error.message.includes(url), false);
+        assert.equal(error.message.includes("test-key"), false);
+        return true;
+      }
+    );
+  }
+});
+
 test("ignores environment attempts to override fixed Arc configuration", () => {
   const config = getServerRuntimeConfig({
     ...validEnv,
     ARC_CHAIN_ID: "1",
-    ARC_RPC_URL: "https://evil.example",
     USDC_ADDRESS: "0x2222222222222222222222222222222222222222",
     ARC_EXPLORER_URL: "https://evil.example"
   });
@@ -184,6 +229,12 @@ test("keeps Supabase credentials server-only and client creation lazy", async ()
   assert.doesNotMatch(env, /NEXT_PUBLIC_SUPABASE_/);
   assert.match(env, /^SUPABASE_URL=/m);
   assert.match(env, /^SUPABASE_SERVICE_ROLE_KEY=/m);
+  assert.match(
+    env,
+    /^# Server-only private Arc Testnet endpoint\. Never use NEXT_PUBLIC_ or commit a real key\.$/m
+  );
+  assert.match(env, /^ARC_RPC_URL=$/m);
+  assert.doesNotMatch(env, /NEXT_PUBLIC_ARC_RPC_URL/);
   assert.doesNotMatch(legacyClient, /NEXT_PUBLIC_SUPABASE_/);
   assert.match(admin, /export function getSupabaseAdmin/);
   assert.match(admin, /^import "server-only";/m);
