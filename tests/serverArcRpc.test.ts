@@ -190,3 +190,35 @@ test("surfaces JSON-RPC invalid-parameter errors without fallback or endpoint le
     await Promise.all([primary.close(), fallback.close()]);
   }
 });
+
+test("redacts query and path endpoint keys echoed by a JSON-RPC error", async () => {
+  const pathToken = "primary_path_token_123456789";
+  const queryToken = "primary_query_token_987654321==";
+  const fallbackToken = "fallback_query_token_123456789";
+  const primary = await startRpcServer({
+    error: {
+      code: -32602,
+      message: `invalid parameters: ${pathToken}; ${queryToken}`
+    }
+  }, pathToken);
+  const fallback = await startRpcServer({ blockNumber: "0x2a" }, fallbackToken);
+  const primaryUrl = `${primary.url}?apiKey=${queryToken}`;
+
+  try {
+    const result = await runClient([primaryUrl, fallback.url]);
+    assert.equal(result.status, 0);
+    const payload = JSON.parse(result.output) as { error: Record<string, unknown> };
+    assert.equal(payload.error.code, -32602);
+    assert.equal(
+      payload.error.details,
+      "invalid parameters: [redacted endpoint]; [redacted endpoint]"
+    );
+    assert.equal(primary.requests(), 1);
+    assert.equal(fallback.requests(), 0);
+    assert.doesNotMatch(result.output, new RegExp(primaryUrl, "i"));
+    assert.doesNotMatch(result.output, new RegExp(pathToken, "i"));
+    assert.doesNotMatch(result.output, new RegExp(queryToken, "i"));
+  } finally {
+    await Promise.all([primary.close(), fallback.close()]);
+  }
+});

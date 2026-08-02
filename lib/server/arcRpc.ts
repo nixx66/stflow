@@ -55,17 +55,50 @@ function isTransientTransportError(error: Error) {
   );
 }
 
+function decoded(value: string) {
+  try {
+    return decodeURIComponent(value.replaceAll("+", " "));
+  } catch {
+    return value;
+  }
+}
+
+function endpointSecretValues(rpcUrls: readonly string[]) {
+  const values = new Set<string>();
+
+  for (const rpcUrl of rpcUrls) {
+    values.add(rpcUrl);
+    try {
+      const url = new URL(rpcUrl);
+      for (const credential of [url.username, url.password]) {
+        if (credential) values.add(decoded(credential));
+      }
+      for (const parameter of url.search.slice(1).split("&")) {
+        const separator = parameter.indexOf("=");
+        const value = separator >= 0 ? parameter.slice(separator + 1) : "";
+        if (value) {
+          values.add(value);
+          values.add(decoded(value));
+        }
+      }
+      const pathToken = url.pathname.split("/").filter(Boolean).at(-1);
+      if (pathToken && pathToken.length >= 8) {
+        values.add(pathToken);
+        values.add(decoded(pathToken));
+      }
+    } catch {
+      // Viem will report an invalid explicit URL without exposing it from this boundary.
+    }
+  }
+
+  return [...values].filter(Boolean).sort((left, right) => right.length - left.length);
+}
+
 function redactEndpointValues(value: string, rpcUrls: readonly string[]) {
   let redacted = value.replace(/https?:\/\/[^\s]+/gi, "[redacted endpoint]");
 
-  for (const rpcUrl of rpcUrls) {
-    redacted = redacted.replaceAll(rpcUrl, "[redacted endpoint]");
-    try {
-      const token = new URL(rpcUrl).pathname.split("/").filter(Boolean).at(-1);
-      if (token) redacted = redacted.replaceAll(token, "[redacted endpoint]");
-    } catch {
-      // Explicit URLs are consumed by viem; no additional error is needed here.
-    }
+  for (const secret of endpointSecretValues(rpcUrls)) {
+    redacted = redacted.replaceAll(secret, "[redacted endpoint]");
   }
 
   return redacted;
