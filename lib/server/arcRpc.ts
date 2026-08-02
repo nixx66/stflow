@@ -41,9 +41,14 @@ function rpcError(errors: readonly ErrorLike[]) {
   return errors.find((error) => typeof error.code === "number");
 }
 
+const transientRpcCodes = new Set([429, -32005]);
+
 function isTransientTransportError(error: Error) {
   const errors = errorChain(error);
-  if (rpcError(errors)) return false;
+  const rpc = rpcError(errors);
+  if (typeof rpc?.code === "number") {
+    return transientRpcCodes.has(rpc.code);
+  }
 
   const status = errors.find((item) => typeof item.status === "number")?.status;
   if (typeof status === "number") {

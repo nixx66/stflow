@@ -165,6 +165,46 @@ test("fails over from a transient Arc RPC HTTP failure to the next configured en
   }
 });
 
+test("fails over after a bounded JSON-RPC 429 retry", async () => {
+  const primary = await startRpcServer({
+    error: { code: 429, message: "request limit reached" }
+  }, "primary_json_rpc_rate_limit_token");
+  const fallback = await startRpcServer(
+    { blockNumber: "0x2a" },
+    "fallback_json_rpc_rate_limit_token"
+  );
+
+  try {
+    const result = await runClient([primary.url, fallback.url]);
+    assert.equal(result.status, 0);
+    assert.deepEqual(JSON.parse(result.output), { blockNumber: "42" });
+    assert.equal(primary.requests(), 2);
+    assert.equal(fallback.requests(), 1);
+  } finally {
+    await Promise.all([primary.close(), fallback.close()]);
+  }
+});
+
+test("fails over after a bounded JSON-RPC provider limit retry", async () => {
+  const primary = await startRpcServer({
+    error: { code: -32005, message: "limit exceeded" }
+  }, "primary_provider_limit_token");
+  const fallback = await startRpcServer(
+    { blockNumber: "0x2a" },
+    "fallback_provider_limit_token"
+  );
+
+  try {
+    const result = await runClient([primary.url, fallback.url]);
+    assert.equal(result.status, 0);
+    assert.deepEqual(JSON.parse(result.output), { blockNumber: "42" });
+    assert.equal(primary.requests(), 2);
+    assert.equal(fallback.requests(), 1);
+  } finally {
+    await Promise.all([primary.close(), fallback.close()]);
+  }
+});
+
 test("surfaces a contract execution error without sending it to the fallback endpoint or leaking URLs", async () => {
   const primaryToken = "primary_contract_token_123456789";
   const fallbackToken = "fallback_contract_token_987654321";
